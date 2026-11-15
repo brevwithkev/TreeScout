@@ -1,0 +1,137 @@
+[
+ {
+  "place_id": 259136627,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 28853229,
+  "lat": "14.7552076",
+  "lon": "121.0119703",
+  "class": "highway",
+  "type": "residential",
+  "place_rank": 26,
+  "importance": 0.053381636530098385,
+  "addresstype": "residential",
+  "name": "Rocky Mountain Street",
+  "display_name": "Rocky Mountain Street, Bagumbong, Zone 15, Caybiga, District 1, Caloocan, Northern Manila District, Metro Manila, 3020, Philippines",
+  "address": {
+   "road": "Rocky Mountain Street",
+   "quarter": "Bagumbong",
+   "neighbourhood": "Zone 15",
+   "borough": "Caybiga",
+   "city_district": "District 1",
+   "city": "Caloocan",
+   "state_district": "Northern Manila District",
+   "region": "Metro Manila",
+   "ISO3166-2-lvl3": "PH-00",
+   "postcode": "3020",
+   "country": "Philippines",
+   "country_code": "ph"
+  },
+  "boundingbox": [
+   "14.7544174",
+   "14.7555955",
+   "121.0114356",
+   "121.0129164"
+  ]
+ },
+ {
+  "place_id": 346753357,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 259033914,
+  "lat": "39.8686870",
+  "lon": "-77.5006388",
+  "class": "amenity",
+  "type": "shelter",
+  "place_rank": 30,
+  "importance": 3.9082169832868203e-05,
+  "addresstype": "amenity",
+  "name": "Rocky Mountain Shelter 2",
+  "display_name": "Rocky Mountain Shelter 2, Appalachian National Scenic Trail, Caledonia Park, Guilford Township, Franklin County, Pennsylvania, 17222, United States",
+  "address": {
+   "amenity": "Rocky Mountain Shelter 2",
+   "road": "Appalachian National Scenic Trail",
+   "hamlet": "Caledonia Park",
+   "city": "Guilford Township",
+   "county": "Franklin County",
+   "state": "Pennsylvania",
+   "ISO3166-2-lvl4": "US-PA",
+   "postcode": "17222",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "39.8686370",
+   "39.8687370",
+   "-77.5006888",
+   "-77.5005888"
+  ]
+ },
+ {
+  "place_id": 349595904,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 419229851,
+  "lat": "39.8686166",
+  "lon": "-77.5006485",
+  "class": "amenity",
+  "type": "shelter",
+  "place_rank": 30,
+  "importance": 3.9082169832868203e-05,
+  "addresstype": "amenity",
+  "name": "Rocky Mountain Shelter 1",
+  "display_name": "Rocky Mountain Shelter 1, Appalachian National Scenic Trail, Caledonia Park, Guilford Township, Franklin County, Pennsylvania, 17222, United States",
+  "address": {
+   "amenity": "Rocky Mountain Shelter 1",
+   "road": "Appalachian National Scenic Trail",
+   "hamlet": "Caledonia Park",
+   "city": "Guilford Township",
+   "county": "Franklin County",
+   "state": "Pennsylvania",
+   "ISO3166-2-lvl4": "US-PA",
+   "postcode": "17222",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "39.8685666",
+   "39.8686666",
+   "-77.5006985",
+   "-77.5005985"
+  ]
+ },
+ {
+  "place_id": 259680378,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 2138685030,
+  "lat": "14.4242410",
+  "lon": "121.0267670",
+  "class": "amenity",
+  "type": "cafe",
+  "place_rank": 30,
+  "importance": 5.8607614251880943e-05,
+  "addresstype": "amenity",
+  "name": "Rocky Mountain Chocolate Factory",
+  "display_name": "Rocky Mountain Chocolate Factory, Madrigal Avenue, Ayala Alabang, Muntinlupa District 2, Muntinlupa, Southern Manila District, Metro Manila, 1799, Philippines",
+  "address": {
+   "amenity": "Rocky Mountain Chocolate Factory",
+   "road": "Madrigal Avenue",
+   "quarter": "Ayala Alabang",
+   "city_district": "Muntinlupa District 2",
+   "city": "Muntinlupa",
+   "state_district": "Southern Manila District",
+   "region": "Metro Manila",
+   "ISO3166-2-lvl3": "PH-00",
+   "postcode": "1799",
+   "country": "Philippines",
+   "country_code": "ph"
+  },
+  "boundingbox": [
+   "14.4241910",
+   "14.4242910",
+   "121.0267170",
+   "121.0268170"
+  ]
+ }
+]

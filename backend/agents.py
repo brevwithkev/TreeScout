@@ -26,7 +26,7 @@ from backend.tools.common import now_iso, timezone_for, unavailable
 from backend.tools.anomaly import anomaly_condition, compare_climate
 from backend.tools.conditions import derive_conditions
 from backend.tools.elevation import get_elevation_gain
-from backend.tools.geocode import clean_place, geocode
+from backend.tools.geocode import US_CODES, clean_place, geocode
 from backend.tools.hazards import get_hazards
 from backend.tools.ranking import _is_loop, rank_trails
 from backend.tools.route import make_route, route_km
@@ -53,6 +53,10 @@ MAX_ROUNDS = 2
 # No coverage area: any place Nominatim finds and OpenStreetMap has trails for. These are the "no plan" warnings.
 NOT_FOUND = "Couldn't find {place}"
 LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
+NOT_HIKING_AREA = "Couldn't find {place} as a hiking area; try a park or town name"
+US_ONLY_ALERTS = "Official alerts: available for US locations only"
+US_ONLY_FORECAST = "NWS forecasts: available for US locations only"
+HOME_REGION = ("Michigan", "United States", "us")  # every town in PLACES
 NO_TRAILS = "No mapped trails found near {place}"
 ELEVATION_UNKNOWN = "Elevation unknown: the time estimate may be far too short on steep trails"
 STRENUOUS_CLIMB_M = 1000   # more climbing than this, or a longer route than STRENUOUS_HOURS: a warning (never a rejection)
@@ -193,6 +197,8 @@ def _summarize(name, result, args, label=None):
             return "Trail conditions: no low light or freezing temperatures"
         return "Trail conditions: " + ", ".join(c["title"] for c in result)
     if name == "geocode":
+        if result.get("reason") == "not_hiking_area":
+            return f"Nominatim: no hiking area for {result.get('query')} (only streets/buildings, or another country)"
         if not result.get("found"):
             return f"Nominatim: no match for {result.get('query')}"
         return f"Nominatim: {result['query']} -> {result['lat']:.4f}, {result['lon']:.4f} ({result['display_name']})"
@@ -313,14 +319,45 @@ def parse_request(text, today):
             out["area_name"], out["area_lat"], out["area_lon"] = place.title(), lat, lon
             break
     else:
-        named = re.search(r"\b(?:in|near|around|at|to)\s+(?:the\s+)?([A-Z][A-Za-z.'-]+(?:,?\s+[A-Z][A-Za-z.'-]+)*)",
-                          text)
+        park = national_park_name(text)
+        named = None if park else re.search(
+            r"\b(?:in|near|around|at|to)\s+(?:the\s+)?([A-Z][A-Za-z.'-]+(?:,?\s+[A-Z][A-Za-z.'-]+)*)", text)
+        if park:
+            out["unknown_place"] = park
         words = named.group(1).split() if named else []
         while words and words[-1].strip(",").lower() in NOT_PLACES:  # "near Banff Saturday" -> "Banff"
             words.pop()
         if words:
             out["unknown_place"] = " ".join(words).strip(",")
     return out
+
+
+PARK_STOP = {"a", "an", "the", "in", "at", "near", "around", "to", "hike", "hiking", "walk", "trail", "trails", "day",
+             "easy", "hilly", "mile", "miles", "km", "visit", "go", "take", "want", "i", "we", "this", "next",
+             "tomorrow", "today", "starting", "for", "of", "and", "on", "loop", "with", "hills", "me", "my"}
+
+
+def national_park_name(text):
+    """"Rocky Mountain National Park" for "... near rocky mountain national park" or "... National Rocky Mountain"
+    (either word order), else None."""
+    def keep(words):
+        out = []
+        for w in words:
+            if w.lower() in PARK_STOP or any(ch.isdigit() for ch in w):
+                break
+            out.append(w)
+        return out
+    before = re.search(r"((?:[A-Za-z.'-]+\s+){1,5})national\s+park\b", text, re.IGNORECASE)
+    if before:
+        words = keep(list(reversed(before.group(1).split())))[::-1]
+        if words:
+            return " ".join(w[:1].upper() + w[1:] for w in words) + " National Park"
+    after = re.search(r"\bnational\s+(?:park\s+)?((?:[A-Za-z.'-]+\s*){1,4})", text, re.IGNORECASE)
+    if after:
+        words = keep(after.group(1).split())
+        if words:
+            return " ".join(w[:1].upper() + w[1:] for w in words) + " National Park"
+    return None
 
 
 def _valid_date(value, today):
@@ -579,17 +616,32 @@ class PlanContext:
             return None
         here = local_place(name)
         if here:
-            self.resolved = {"lat": here[0], "lon": here[1], "name": name}
+            town = name.split(",")[0].strip()
+            self.resolved = {"lat": here[0], "lon": here[1], "name": name,
+                             "display_name": f"{town[:1].upper()}{town[1:]}, {HOME_REGION[0]}, {HOME_REGION[1]}",
+                             "country": HOME_REGION[1], "country_code": HOME_REGION[2]}
             return dict(self.resolved)
-        found = self.tools.call("geocode", geocode, name)
+        found = self.tools.call("geocode", geocode, name, self.text)
         if _failed(found):
             return {"error": LOOKUP_DOWN.format(place=name), "name": name}
         if not found.get("found"):
-            return {"error": NOT_FOUND.format(place=name), "name": name}
+            message = NOT_HIKING_AREA if found.get("reason") == "not_hiking_area" else NOT_FOUND
+            return {"error": message.format(place=name), "name": name}
         lat, lon = round(found["lat"], 4), round(found["lon"], 4)
         self.anywhere.add((lat, lon))
-        self.resolved = {"lat": lat, "lon": lon, "name": name}
+        self.resolved = {"lat": lat, "lon": lon, "name": name, "display_name": found.get("display_name"),
+                         "country": found.get("country"), "country_code": found.get("country_code")}
         return dict(self.resolved)
+
+    def outside_us(self):
+        """True when the resolved place is known to be outside the US (NWS covers only the US)."""
+        code = (self.resolved or {}).get("country_code")
+        return bool(code) and code not in US_CODES
+
+    def weather(self, lat, lon, day):
+        if self.outside_us():
+            return _Later(lambda: unavailable("NWS", US_ONLY_FORECAST))
+        return self.tools.submit("get_weather", get_weather, round(lat, 4), round(lon, 4), day)
 
     def here(self):
         """Where location tools run: the resolved place, else (no place named) the request's own lat/lon."""
@@ -634,6 +686,8 @@ class PlanContext:
                                  label=trail["name"])
 
     def alerts(self, area):
+        if self.outside_us():  # not an HTTP error from NWS: there are no NWS alerts outside the US
+            return _Later(lambda: unavailable("NWS", US_ONLY_ALERTS))
         return self.tools.submit("get_nws_alerts", get_nws_alerts, round(area[0], 4), round(area[1], 4))
 
     def seasonal(self, area, day):
@@ -644,6 +698,8 @@ class PlanContext:
         """NWS hourly summary for start .. start + est_duration_min (unavailable without timing)."""
         if _failed(timing):
             return _Later(lambda: unavailable("NWS hourly", "No hike timing to look up"))
+        if self.outside_us():
+            return _Later(lambda: unavailable("NWS hourly", US_ONLY_FORECAST))
         return self.tools.submit("get_hike_window", get_hike_window, round(area[0], 4), round(area[1], 4), day,
                                  timing["start"], timing["est_duration_min"])
 
@@ -680,7 +736,7 @@ class PlanContext:
             center = self.here()
             return _Later(lambda: self.rank(list(self.trails_by_id.values()), constraints, *center))
         if name == "get_weather":
-            return self.tools.submit("get_weather", get_weather, round(lat, 4), round(lon, 4), str(a.get("date")))
+            return self.weather(lat, lon, str(a.get("date")))
         if name == "get_hazards":
             return self.tools.submit("get_hazards", get_hazards, round(lat, 4), round(lon, 4),
                                      num("radius_km", HAZARD_RADIUS_KM))
@@ -729,7 +785,7 @@ class _Later:
     def __init__(self, fn):
         self.fn, self.done, self.value = fn, False, None
 
-    def result(self):
+    def result(self, timeout=None):  # same call shape as a Future (prefetch passes a timeout)
         if not self.done:
             self.value, self.done = self.fn(), True
         return self.value
@@ -787,8 +843,9 @@ def _plan(ctx):
     # Prefetch independent tools while the LLM thinks (identical LLM calls reuse these results).
     if rules_area is not None:
         ctx.trails_future(*rules_area)
-        for name, fn in (("get_weather", get_weather), ("get_climate", get_climate)):
-            ctx.tools.submit(name, fn, round(rules_area[0], 4), round(rules_area[1], 4), rules_constraints["date"])
+        ctx.weather(rules_area[0], rules_area[1], rules_constraints["date"])
+        ctx.tools.submit("get_climate", get_climate, round(rules_area[0], 4), round(rules_area[1], 4),
+                         rules_constraints["date"])
         ctx.tools.submit("get_hazards", get_hazards, round(rules_area[0], 4), round(rules_area[1], 4), HAZARD_RADIUS_KM)
     space = ctx.tools.submit("get_space_weather", get_space_weather)
     prefetched = _prefetch_context(ctx, rules_area, rules_constraints, space)
@@ -840,7 +897,9 @@ def _plan(ctx):
         area, place = (ctx.body_lat, ctx.body_lon), None
     ctx.area = area
     if area is not None:
-        ctx.place_out = {"name": place, "lat": round(area[0], 4), "lon": round(area[1], 4)}
+        known = ctx.resolved if ctx.resolved and ctx.resolved.get("name") == place else {}
+        ctx.place_out = {"name": place, "lat": round(area[0], 4), "lon": round(area[1], 4),
+                         "display_name": known.get("display_name"), "country": known.get("country")}
 
     if area is None:  # the place name was not found (or the lookup is down): no plan
         trace.add("planner", "reject", area_error)
@@ -854,7 +913,7 @@ def _plan(ctx):
         trace.add("planner", "reject", message if not _failed(trails) else f"{message} ({trails.get('error')})")
         # Sections that don't depend on a trail still report their own results.
         here = (round(area[0], 4), round(area[1], 4))
-        weather = ctx.tools.submit("get_weather", get_weather, *here, constraints["date"])
+        weather = ctx.weather(*here, constraints["date"])
         climate = ctx.tools.submit("get_climate", get_climate, *here, constraints["date"])
         hazards = ctx.tools.submit("get_hazards", get_hazards, *here, HAZARD_RADIUS_KM)
         extra = {"alerts": ctx.alerts(area).result(), "seasonal": ctx.seasonal(area, constraints["date"]).result(),
@@ -984,7 +1043,7 @@ def _prefetch_context(ctx, area, constraints, space):
         ctx.alerts(area)  # not shown to the planner; started now so _assemble usually finds them done
         ctx.seasonal(area, constraints["date"])
         futures = {
-            "get_weather": ctx.tools.submit("get_weather", get_weather, *here, constraints["date"]),
+            "get_weather": ctx.weather(*here, constraints["date"]),
             "get_climate": ctx.tools.submit("get_climate", get_climate, *here, constraints["date"]),
             "get_hazards": ctx.tools.submit("get_hazards", get_hazards, *here, HAZARD_RADIUS_KM),
         }
@@ -1034,7 +1093,7 @@ def _choose(ctx, answer, ranked, rejected):
 def _assemble(ctx, trail, constraints, area):
     """Every number below comes from a tool result."""
     ctx.elevation(trail)  # started now; used by ctx.route_timing below
-    weather = ctx.tools.submit("get_weather", get_weather, round(area[0], 4), round(area[1], 4), constraints["date"])
+    weather = ctx.weather(area[0], area[1], constraints["date"])
     climate = ctx.tools.submit("get_climate", get_climate, round(area[0], 4), round(area[1], 4), constraints["date"])
     hazards = ctx.tools.submit("get_hazards", get_hazards, round(area[0], 4), round(area[1], 4), HAZARD_RADIUS_KM)
     alerts, seasonal = ctx.alerts(area), ctx.seasonal(area, constraints["date"])
@@ -1051,11 +1110,12 @@ def _assemble(ctx, trail, constraints, area):
     return {
         # The route walked: distance_km, elevation_gain_m (the climb, both ways on an out-and-back) and coords (out
         # and back) are the route's. Extra fields (not in mock_plan.json): elevation_source, route, trail_km,
-        # turnaround_km, turnaround_index.
+        # turnaround_km, turnaround_index, net_drop_m (start minus turnaround elevation; out-and-back only).
         "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": route["route_km"],
                   "elevation_gain_m": route["climb_m"], "coords": route["coords"],
                   "elevation_source": gain_source, "route": route["kind"], "trail_km": route["trail_km"],
-                  "turnaround_km": route["turnaround_km"], "turnaround_index": route["turnaround_index"]},
+                  "turnaround_km": route["turnaround_km"], "turnaround_index": route["turnaround_index"],
+                  "net_drop_m": route["net_drop_m"]},
         "terrain_range_m": _terrain_range(ctx.area_trails),
         "score": trail.get("score", 0.0), "constraints": dict(constraints),
         "timing": timing, "weather": weather.result(), "climate": climate.result(), "hazards": hazards.result(),

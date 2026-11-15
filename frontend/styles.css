@@ -203,6 +203,7 @@ input[type="date"], input[type="time"] { font-family: var(--font-mono); }
 .results { min-height: 2rem; }
 .info-empty { color: var(--ink-3); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.searched-near { margin: var(--space-2) 0 0; color: var(--ink-2); font-size: 0.9rem; }
 .anomaly { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .anomaly p { margin: 0; }
 .anomaly-summary { font-weight: 500; }

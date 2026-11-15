@@ -120,7 +120,7 @@ class TrailTests(unittest.TestCase):
         self.assertEqual(list(result), list(expected))
         # Contract trail keys plus the optional extras: elevation_source (card label) and the route shape.
         self.assertEqual(result["trail"].keys(), expected["trail"].keys() | {
-            "elevation_source", "route", "trail_km", "turnaround_km", "turnaround_index"})
+            "elevation_source", "route", "trail_km", "turnaround_km", "turnaround_index", "net_drop_m"})
         self.assertEqual(result["trail"]["elevation_source"], "Open-Meteo")
         self.assertEqual(result["trail"]["name"], "Real trail")
         self.assertEqual(result["trail"]["elevation_gain_m"], 12)

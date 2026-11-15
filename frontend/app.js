@@ -562,19 +562,37 @@ function warningsBanner(warnings) {
       el("ul", {}, list.map((w) => el("li", {}, w)))));
 }
 
+/** "Searched near: Grand Canyon, Coconino County, Arizona, United States" (plan.place), or null. */
+function searchedNear(plan) {
+  const p = isObj(plan.place) ? plan.place : null;
+  if (!p) return null;
+  const where = str(p.display_name) || str(p.name);
+  const country = str(p.country);
+  if (!where) return el("p", { class: "searched-near" }, "Searched near your location");
+  const showCountry = country && !where.endsWith(country);
+  return el("p", { class: "searched-near" }, "Searched near: ", el("strong", {}, where),
+    showCountry ? ` (${country})` : null);
+}
+
 function trailCard(plan, coords) {
   const t = section(plan, "trail");
   const explanation = str(plan.explanation);
-  const body = t && el("div", {},
+  const near = searchedNear(plan);
+  const body = !t ? (near && el("div", {}, unavailable(), near)) : el("div", {},
     el("p", { class: "trail-name" }, str(t.name) || "Unnamed trail"),
     kv([
       ["Distance", kmMi(t.distance_km)],
       ["Route", routeShape(t)],
+      ["Net drop to turnaround", t.route === "out-and-back" && t.net_drop_m !== null && t.net_drop_m !== undefined
+        ? (Math.abs(toNum(t.net_drop_m)) < 10 ? "About level"
+          : toNum(t.net_drop_m) > 0 ? `${fmtUnit(t.net_drop_m, 0, " m")} down` : `${fmtUnit(-toNum(t.net_drop_m), 0, " m")} up`)
+        : null],
       [t.route === "out-and-back" ? "Total climb (both ways)" : "Elevation gain",
        t.elevation_gain_m === null ? "Unknown" : fmtUnit(t.elevation_gain_m, 0, " m")],
       ["Route points", coords ? String(coords.length) : null],
     ]),
     explanation && el("p", { class: "explanation" }, explanation),
+    near,
     !coords && el("p", { class: "unavailable" }, "No usable route coordinates, so nothing is drawn on the map."));
   const osm = t && Number(t.osm_id) > 0 ? `OSM id ${t.osm_id}` : null;
   return card("Trail", {
@@ -894,8 +912,10 @@ function renderHazards(plan, origin) {
     return staticHazard("⚠️", str(a.event) || "Weather alert", el("span", { class: `state state--${sev.cls} sev` }, sev.word),
       [str(a.headline), when], str(a.link) && { href: str(a.link), text: "NWS alert details" });
   }));
+  const usOnly = alerts.state === "unavailable" && /^Official alerts:/.test(alerts.error || "");
   const alertsGroup = hazardGroup(cachedFrom(alerts) ? `NWS alerts (${cachedFrom(alerts)})` : "NWS alerts", "📢",
-    groupProblem(alerts, "NWS alerts")
+    (usOnly && el("p", { class: "state state--info" }, alerts.error)) // outside the US: no NWS, not an error
+      || groupProblem(alerts, "NWS alerts")
       || (alertItems.length ? alertList() : el("p", { class: "state state--ok" }, "No active NWS alerts for this point")),
     alerts.state === "ok" && sourceChecked(alerts, "NWS"));
 

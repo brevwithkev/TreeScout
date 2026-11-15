@@ -1,0 +1,171 @@
+[
+ {
+  "place_id": 357587422,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 28135191,
+  "lat": "43.6890408",
+  "lon": "-79.3016211",
+  "class": "building",
+  "type": "train_station",
+  "place_rank": 30,
+  "importance": 0.40580843572923003,
+  "addresstype": "building",
+  "name": "Main Street",
+  "display_name": "Main Street, 315, Main Street, Danforth East, East End-Danforth, Beaches—East York, Toronto, Ontario, M4C 1L3, Canada",
+  "address": {
+   "building": "Main Street",
+   "house_number": "315",
+   "road": "Main Street",
+   "neighbourhood": "Danforth East",
+   "suburb": "East End-Danforth",
+   "ward": "Beaches—East York",
+   "city": "Toronto",
+   "state": "Ontario",
+   "ISO3166-2-lvl4": "CA-ON",
+   "postcode": "M4C 1L3",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "43.6888372",
+   "43.6892734",
+   "-79.3020390",
+   "-79.3011391"
+  ]
+ },
+ {
+  "place_id": 351281472,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 32821214,
+  "lat": "43.6890355",
+  "lon": "-79.3015866",
+  "class": "railway",
+  "type": "stop",
+  "place_rank": 30,
+  "importance": 0.40580843572923003,
+  "addresstype": "railway",
+  "name": "Main Street",
+  "display_name": "Main Street, Main Bus Terminal, Danforth East, East End-Danforth, Beaches—East York, Toronto, Ontario, M4C 1L3, Canada",
+  "address": {
+   "railway": "Main Street",
+   "road": "Main Bus Terminal",
+   "neighbourhood": "Danforth East",
+   "suburb": "East End-Danforth",
+   "ward": "Beaches—East York",
+   "city": "Toronto",
+   "state": "Ontario",
+   "ISO3166-2-lvl4": "CA-ON",
+   "postcode": "M4C 1L3",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "43.6889855",
+   "43.6890855",
+   "-79.3016366",
+   "-79.3015366"
+  ]
+ },
+ {
+  "place_id": 351409696,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 5326541297,
+  "lat": "43.6890489",
+  "lon": "-79.3016043",
+  "class": "railway",
+  "type": "station",
+  "place_rank": 30,
+  "importance": 0.40580843572923003,
+  "addresstype": "railway",
+  "name": "Main Street",
+  "display_name": "Main Street, Main Bus Terminal, Danforth East, East End-Danforth, Beaches—East York, Toronto, Ontario, M4C 1L3, Canada",
+  "address": {
+   "railway": "Main Street",
+   "road": "Main Bus Terminal",
+   "neighbourhood": "Danforth East",
+   "suburb": "East End-Danforth",
+   "ward": "Beaches—East York",
+   "city": "Toronto",
+   "state": "Ontario",
+   "ISO3166-2-lvl4": "CA-ON",
+   "postcode": "M4C 1L3",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "43.6840489",
+   "43.6940489",
+   "-79.3066043",
+   "-79.2966043"
+  ]
+ },
+ {
+  "place_id": 351428369,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 10033986098,
+  "lat": "43.6890547",
+  "lon": "-79.3015835",
+  "class": "amenity",
+  "type": "bus_station",
+  "place_rank": 30,
+  "importance": 0.40580843572923003,
+  "addresstype": "amenity",
+  "name": "Main Street",
+  "display_name": "Main Street, Main Bus Terminal, Danforth East, East End-Danforth, Beaches—East York, Toronto, Ontario, M4C 1L3, Canada",
+  "address": {
+   "amenity": "Main Street",
+   "road": "Main Bus Terminal",
+   "neighbourhood": "Danforth East",
+   "suburb": "East End-Danforth",
+   "ward": "Beaches—East York",
+   "city": "Toronto",
+   "state": "Ontario",
+   "ISO3166-2-lvl4": "CA-ON",
+   "postcode": "M4C 1L3",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "43.6890047",
+   "43.6891047",
+   "-79.3016335",
+   "-79.3015335"
+  ]
+ },
+ {
+  "place_id": 317759764,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 7108772,
+  "lat": "33.9824412",
+  "lon": "-117.3741472",
+  "class": "highway",
+  "type": "pedestrian",
+  "place_rank": 26,
+  "importance": 0.37978567549726355,
+  "addresstype": "pedestrian",
+  "name": "Main Street",
+  "display_name": "Main Street, Downtown Riverside, Riverside, Riverside County, California, 92552, United States",
+  "address": {
+   "road": "Main Street",
+   "neighbourhood": "Downtown Riverside",
+   "city": "Riverside",
+   "county": "Riverside County",
+   "state": "California",
+   "ISO3166-2-lvl4": "US-CA",
+   "postcode": "92552",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "33.9809285",
+   "33.9839368",
+   "-117.3751338",
+   "-117.3731361"
+  ]
+ }
+]

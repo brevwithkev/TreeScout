@@ -203,7 +203,7 @@ class GuardAndCoverageTests(unittest.TestCase):
 
     def test_place_gemini_names_is_looked_up_and_not_found(self):
         not_found = {"source": "OpenStreetMap Nominatim", "query": "Atlantis", "found": False, "checked_at": "t"}
-        with patch("backend.agents.geocode", lambda name: not_found):
+        with patch("backend.agents.geocode", lambda name, text="": not_found):
             result = self.plan_with("A hike somewhere in lost atlantis tomorrow",  # lowercase: the rules miss it
                                     {"chosen_osm_id": None, "explanation": "?",
                                      "constraints": {"distance_km": 8, "place": "Atlantis",
@@ -532,7 +532,7 @@ class HazardCheckerTests(unittest.TestCase):
 
     def test_place_not_found_marks_the_new_sections_unavailable(self):
         not_found = {"source": "OpenStreetMap Nominatim", "query": "Xanadu", "found": False, "checked_at": "t"}
-        with patch("backend.agents.geocode", lambda name: not_found):
+        with patch("backend.agents.geocode", lambda name, text="": not_found):
             result = agents.make_plan("A hike in Xanadu tomorrow", 42.0, -83.0)
         for key in ("alerts", "hike_window", "seasonal", "climate_anomaly"):
             self.assertIs(result[key]["available"], False, key)

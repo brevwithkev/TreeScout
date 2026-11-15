@@ -1,0 +1,89 @@
+[
+ {
+  "place_id": 328572326,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "relation",
+  "osm_id": 390960,
+  "lat": "40.3553915",
+  "lon": "-105.7176957",
+  "class": "leisure",
+  "type": "nature_reserve",
+  "place_rank": 24,
+  "importance": 0.5221887716495207,
+  "addresstype": "nature_reserve",
+  "name": "Rocky Mountain National Park",
+  "display_name": "Rocky Mountain National Park, Larimer County, Colorado, United States",
+  "address": {
+   "nature_reserve": "Rocky Mountain National Park",
+   "county": "Larimer County",
+   "state": "Colorado",
+   "ISO3166-2-lvl4": "US-CO",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "40.1577700",
+   "40.5537870",
+   "-105.9137139",
+   "-105.4935830"
+  ]
+ },
+ {
+  "place_id": 329834821,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 358945215,
+  "lat": "40.3333178",
+  "lon": "-105.7088953",
+  "class": "leisure",
+  "type": "park",
+  "place_rank": 24,
+  "importance": 0.5221887716495207,
+  "addresstype": "park",
+  "name": "Rocky Mountain National Park",
+  "display_name": "Rocky Mountain National Park, Larimer County, Colorado, United States",
+  "address": {
+   "park": "Rocky Mountain National Park",
+   "county": "Larimer County",
+   "state": "Colorado",
+   "ISO3166-2-lvl4": "US-CO",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "40.3332678",
+   "40.3333678",
+   "-105.7089453",
+   "-105.7088453"
+  ]
+ },
+ {
+  "place_id": 421169158,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 13977708101,
+  "lat": "40.3103684",
+  "lon": "-105.8260783",
+  "class": "leisure",
+  "type": "park",
+  "place_rank": 24,
+  "importance": 0.08000999999999997,
+  "addresstype": "park",
+  "name": "Rocky Mountain National Park",
+  "display_name": "Rocky Mountain National Park, Grand County, Colorado, United States",
+  "address": {
+   "park": "Rocky Mountain National Park",
+   "county": "Grand County",
+   "state": "Colorado",
+   "ISO3166-2-lvl4": "US-CO",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "40.3103184",
+   "40.3104184",
+   "-105.8261283",
+   "-105.8260283"
+  ]
+ }
+]

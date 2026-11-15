@@ -264,9 +264,10 @@ class GeocodeTests(unittest.TestCase):
         self.assertEqual((found["found"], found["lat"], found["lon"]), (True, 51.175076, -115.5720773))
         url, params, headers = self.calls[0]
         self.assertEqual(url, "https://nominatim.openstreetmap.org/search")
-        self.assertEqual(params, {"q": "Banff, Alberta", "format": "json", "limit": 5})
+        self.assertEqual(params, {"q": "Banff, Alberta", "format": "json", "limit": 5, "addressdetails": 1})
         self.assertEqual(headers["User-Agent"], common.USER_AGENT)
-        self.assertEqual(geocode.geocode("banff, alberta"), found)            # cached forever, case-insensitive
+        again = geocode.geocode("banff, alberta")                              # cached forever, case-insensitive
+        self.assertEqual((again["lat"], again["lon"], again["country"]), (found["lat"], found["lon"], found["country"]))
         self.assertEqual(len(self.calls), 1)
         self.assertIs(geocode.geocode("Nowhere")["found"], False)
         self.assertEqual(len(self.calls), 2)
