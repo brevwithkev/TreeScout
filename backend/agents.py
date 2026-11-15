@@ -657,6 +657,7 @@ def _plan(ctx):
     # ---- choose, assemble, check: up to MAX_ROUNDS --------------------------------------------------
     rejected, attempts = set(), []
     answer = llm_answer
+    asked_start = constraints["start"]  # before any checker-driven revision
     for round_no in range(1, MAX_ROUNDS + 1):
         chosen = _choose(ctx, answer, ranked, rejected)
         if answer and isinstance(answer.get("constraints"), dict) and round_no > 1:
@@ -705,6 +706,9 @@ def _plan(ctx):
     trace.add("planner", "decide", f"Chose {plan['trail']['name']} ({plan['trail']['distance_km']:.1f} km, "
                                    f"score {plan['score']:.2f})")
     warnings = [] if approved else list(problems)
+    moved = _start_moved_warning(asked_start, plan["constraints"]["start"], plan["timing"], approved)
+    if moved:
+        warnings.insert(0, moved)
     now = datetime.now(TZ)
     if plan["constraints"]["date"] == now.date().isoformat() and plan["constraints"]["start"] < now.strftime("%H:%M"):
         warnings.append(f"The {plan['constraints']['start']} start time has already passed today.")
@@ -819,11 +823,23 @@ def _checker_view(plan, constraints):
     return view
 
 
+def _start_moved_warning(asked, final, timing, approved):
+    """Tell the hiker when the plan no longer starts at the time they asked for."""
+    if not asked or not final or asked == final:
+        return None
+    sunset = None if _failed(timing) else timing.get("sunset")
+    if approved and sunset:
+        return (f"You asked to start at {asked}; moved to {final} so you finish at least 30 min "
+                f"before sunset ({sunset}).")
+    return f"You asked to start at {asked}; the plan starts at {final} instead" + (
+        f" (sunset {sunset})." if sunset else ".")
+
+
 def _approval_line(plan):
     t, w = plan["timing"], plan["weather"]
     bits = []
     if not _failed(t):
-        bits.append(f"{t['start']} start is before the {t['latest_safe_start']} latest safe start")
+        bits.append(f"{t['start']} start is no later than the {t['latest_safe_start']} latest safe start")
     bits.append("NASA EONET hazards unavailable" if _failed(plan["hazards"])
                 else f"no NASA EONET events within {HAZARD_NEAR_KM} km")
     if not _failed(w):

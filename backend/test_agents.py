@@ -115,5 +115,34 @@ class FailFastTests(unittest.TestCase):
         self.assertTrue(result["checker"]["approved"])
 
 
+class StartMovedTests(unittest.TestCase):
+    def setUp(self):
+        for name, fake in FAKE_TOOLS.items():
+            p = patch(f"backend.agents.{name}", fake)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.dict("os.environ", {"GEMINI_API_KEY": ""})  # rule-based planner, no Gemini
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_late_start_is_moved_with_a_warning(self):
+        result = agents.make_plan("2 km walk near Ypsilanti starting at 4:50 PM tomorrow", 42.0, -83.0)
+        self.assertTrue(result["checker"]["approved"])
+        self.assertEqual(result["checker"]["rounds"], 2)
+        moved_to = result["timing"]["start"]
+        self.assertNotEqual(moved_to, "16:50")
+        self.assertLessEqual(moved_to, result["timing"]["latest_safe_start"])
+        self.assertEqual(result["warnings"][0],
+                         f"You asked to start at 16:50; moved to {moved_to} so you finish at least 30 min "
+                         f"before sunset ({result['timing']['sunset']}).")
+        approval = [e["summary"] for e in result["agent_trace"] if e["agent"] == "checker" and e["step"] == "decide"]
+        self.assertIn(f"{moved_to} start is no later than the", approval[0])
+
+    def test_no_warning_when_start_is_kept(self):
+        result = agents.make_plan("2 km walk near Ypsilanti starting at 10 AM tomorrow", 42.0, -83.0)
+        self.assertEqual(result["timing"]["start"], "10:00")
+        self.assertEqual(result["warnings"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
