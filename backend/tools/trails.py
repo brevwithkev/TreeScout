@@ -1,5 +1,6 @@
 """Discover named hiking routes and paths using OpenStreetMap Overpass."""
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
 from math import asin, cos, degrees, isfinite, radians, sin, sqrt
 from threading import Lock
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
 DISK_FRESH_SECONDS = 24 * 3600  # trail geometry changes rarely; skip Overpass if the disk copy is newer
 TIMEOUT_SECONDS = 12
+HEDGE_SECONDS = 4  # start the next mirror if the current one hasn't answered by then
 _cache = {}
 _lock = Lock()
 
@@ -124,6 +126,47 @@ def _save_json(path, payload):
                 logger.warning("Could not remove temporary cache file %s: %s", temporary, exc)
 
 
+def _query_endpoint(endpoint, query):
+    request = Request(
+        endpoint, data=urlencode({"data": query}).encode("utf-8"), method="POST",
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                 "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        if response.status != 200:
+            raise ValueError(f"HTTP {response.status}")
+        payload = json.load(response)
+    return payload, _parse_trails(payload)
+
+
+def _query_hedged(query, failures):
+    """Hedged requests: start the first endpoint, and start the next one after HEDGE_SECONDS without an
+    answer (or right away after a failure). The first success wins. Returns (endpoint, payload, trails)
+    or None, appending each failure to ``failures``. Worst case is about TIMEOUT + 2 * HEDGE seconds
+    instead of 3 * TIMEOUT."""
+    pool = ThreadPoolExecutor(max_workers=len(OVERPASS_ENDPOINTS), thread_name_prefix="overpass")
+    try:
+        pending, queue = {}, list(OVERPASS_ENDPOINTS)
+        while queue or pending:
+            if queue:  # each pass follows a hedge timeout or a failure: start the next mirror
+                endpoint = queue.pop(0)
+                pending[pool.submit(_query_endpoint, endpoint, query)] = endpoint
+            done, _ = wait(pending, timeout=HEDGE_SECONDS if queue else None, return_when=FIRST_COMPLETED)
+            for future in done:
+                endpoint = pending.pop(future)
+                try:
+                    payload, trails = future.result()
+                except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError) as exc:
+                    message = f"{endpoint}: {exc}"
+                    failures.append(message)
+                    logger.warning("Overpass endpoint failed: %s", message)
+                    continue
+                return endpoint, payload, trails
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def get_trails(lat, lon, radius_km=10):
     """Return trails >= 1 km, with endpoint failover and marked offline fallbacks.
 
@@ -165,29 +208,14 @@ def get_trails(lat, lon, radius_km=10):
         )
         failures = []
         trails = None
-        for endpoint in OVERPASS_ENDPOINTS:
-            request = Request(
-                endpoint, data=urlencode({"data": query}).encode("utf-8"), method="POST",
-                headers={"User-Agent": USER_AGENT, "Accept": "application/json",
-                         "Content-Type": "application/x-www-form-urlencoded"},
-            )
-            try:
-                with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-                    if response.status != 200:
-                        raise ValueError(f"HTTP {response.status}")
-                    payload = json.load(response)
-                trails = _parse_trails(payload)
-            except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError) as exc:
-                message = f"{endpoint}: {exc}"
-                failures.append(message)
-                logger.warning("Overpass endpoint failed: %s", message)
-                continue
+        answer = _query_hedged(query, failures)
+        if answer:
+            endpoint, payload, trails = answer
             logger.info("Overpass endpoint answered: %s", endpoint)
             _save_json(cache_file, payload)
             if is_ypsilanti_test and len(trails) >= 5 and not YPSILANTI_FIXTURE.exists():
                 _save_json(YPSILANTI_FIXTURE, payload)
                 logger.info("Saved known-good Ypsilanti fixture to %s", YPSILANTI_FIXTURE)
-            break
         else:
             fallback_paths = [cache_file]
             if is_ypsilanti_test:
@@ -205,7 +233,8 @@ def get_trails(lat, lon, radius_km=10):
                 break
             else:
                 raise OverpassError(
-                    f"All Overpass endpoints failed ({TIMEOUT_SECONDS}-second timeout per endpoint), "
+                    f"All Overpass endpoints failed ({TIMEOUT_SECONDS}-second timeout per endpoint, "
+                    f"staggered {HEDGE_SECONDS} s apart), "
                     "and no usable cached response or matching fixture is available. "
                     + "; ".join(failures)
                 )
