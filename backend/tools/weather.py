@@ -9,7 +9,7 @@ import time
 
 from backend.tools import common
 from backend.tools.common import (cache_get, cache_put, get_json, get_json_within, now_iso, parse_date, retry_once,
-                                  unavailable)
+                                  timezone_for, unavailable)
 
 logger = logging.getLogger("treescout.tools")
 
@@ -19,7 +19,7 @@ TIMEOUT = 10
 HOURLY_TIMEOUT = 8            # hard cap for /points when called from get_weather
 # Hourly forecast: common.FIRST_TIMEOUT_S (6 s) for /points + hourly together, then one retry with 3 s.
 CACHE_SECONDS = 10 * 60       # points metadata and hourly periods, per location (~1 km)
-TZ = ZoneInfo("America/Detroit")
+TZ = ZoneInfo("America/Detroit")  # default for hike_window(); get_hike_window passes the point's own zone
 HEADERS = {"Accept": "application/geo+json"}
 
 
@@ -114,10 +114,10 @@ def hourly_periods(lat, lon):
     return result
 
 
-def hike_window(periods, date, start, est_duration_min):
-    """Summarize the hourly periods that overlap [start, start + duration) on date (America/Detroit).
+def hike_window(periods, date, start, est_duration_min, tz=TZ):
+    """Summarize the hourly periods that overlap [start, start + duration) on date (local time in tz).
     Returns the result dict without source/checked_at, or None when no period overlaps."""
-    begin = datetime.combine(parse_date(date), datetime.strptime(str(start)[:5], "%H:%M").time(), tzinfo=TZ)
+    begin = datetime.combine(parse_date(date), datetime.strptime(str(start)[:5], "%H:%M").time(), tzinfo=tz)
     end = begin + timedelta(minutes=max(1, int(est_duration_min)))
     overlap = []
     for p in periods:
@@ -153,7 +153,7 @@ def get_hike_window(lat, lon, date, start, est_duration_min):
     conditions: [unique shortForecast], summary, checked_at} for the hours of the hike, or an unavailable dict."""
     try:
         hourly = hourly_periods(lat, lon)
-        summary = hike_window(hourly["periods"], date, start, est_duration_min)
+        summary = hike_window(hourly["periods"], date, start, est_duration_min, timezone_for(lat, lon))
         if summary is None:
             return unavailable(HOURLY_SOURCE, f"No NWS hourly forecast for {date} {start} "
                                               "(the hourly forecast covers about 6 days)")

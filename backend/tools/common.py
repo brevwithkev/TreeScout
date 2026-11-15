@@ -2,7 +2,10 @@
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+from threading import Lock
+from zoneinfo import ZoneInfo
 from tempfile import NamedTemporaryFile
 import hashlib
 import json
@@ -15,6 +18,34 @@ from urllib.request import Request, urlopen
 
 USER_AGENT = "TreeScout hackathon (contact: treescout-team)"
 logger = logging.getLogger("treescout.tools")
+
+
+DEFAULT_TZ = "America/Detroit"
+_tz_finder = None
+_tz_lock = Lock()
+
+
+@lru_cache(maxsize=4096)
+def _tz_name(lat, lon):
+    global _tz_finder
+    with _tz_lock:  # TimezoneFinder loads its data once; not documented as thread-safe
+        if _tz_finder is None:
+            from timezonefinder import TimezoneFinder
+            _tz_finder = TimezoneFinder()
+        name = _tz_finder.timezone_at(lat=lat, lng=lon)
+    if not name:  # open ocean in old data: the nautical zone for the longitude
+        offset = -round(lon / 15)
+        name = "Etc/GMT" if offset == 0 else f"Etc/GMT{offset:+d}"
+    return name
+
+
+def timezone_for(lat, lon):
+    """ZoneInfo for a point (timezonefinder); America/Detroit if the lookup fails. Never raises."""
+    try:
+        return ZoneInfo(_tz_name(round(float(lat), 4), round(float(lon), 4)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No time zone for %s, %s (%s); using %s", lat, lon, exc, DEFAULT_TZ)
+        return ZoneInfo(DEFAULT_TZ)
 
 
 def now_iso():
