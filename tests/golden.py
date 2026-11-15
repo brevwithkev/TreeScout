@@ -1,6 +1,6 @@
 """Golden-prompt check of POST /plan against a running server.
 
-    python tests/golden.py [--url http://localhost:8000]
+    python tests/golden.py [--url http://127.0.0.1:8011]   (the test server; never port 8000)
 
 Sends every non-empty line of tests/prompts.txt as {"request": line, "lat": 42.2411, "lon": -83.6130}
 and checks the response against the mock_plan.json contract and per-prompt expectations.
@@ -128,7 +128,7 @@ def check(prompt, plan, raw_text, seconds, contract_keys):
 
 def main():
     parser = argparse.ArgumentParser(description="Run the golden prompts against POST /plan.")
-    parser.add_argument("--url", default="http://localhost:8000", help="server base URL (default: %(default)s)")
+    parser.add_argument("--url", default="http://127.0.0.1:8011", help="server base URL (default: %(default)s)")
     parser.add_argument("--timeout", type=float, default=90, help="per-request HTTP timeout in seconds")
     args = parser.parse_args()
     base_url = args.url.rstrip("/")

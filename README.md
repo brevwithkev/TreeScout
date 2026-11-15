@@ -76,7 +76,7 @@ It skips cached trails and pauses between lookups. If a provider is rate-limited
 ```powershell
 python -m unittest backend.test_agents backend.test_narration backend.test_demo backend.tools.test_trails backend.tools.test_data_cache backend.tools.test_ranking backend.tools.test_elevation  # offline
 python tests/test_tools.py                                  # live data tools, Ypsilanti, tomorrow
-python tests/golden.py --url http://localhost:8000          # golden prompts against a running server
+python tests/golden.py --url http://127.0.0.1:8011         # golden prompts against a test server (default URL)
 python -m unittest discover -s tests -p "*_test.py"         # smoke + no-mock-values checks (server running)
 ```
 
