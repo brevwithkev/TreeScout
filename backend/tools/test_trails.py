@@ -2,6 +2,8 @@
 
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -12,9 +14,20 @@ from backend.main import PlanRequest, plan
 from backend.tools import trails
 
 
+class _Response(io.StringIO):
+    """Fake urlopen() response; trails.py checks .status."""
+    status = 200
+
+
 class TrailTests(unittest.TestCase):
     def setUp(self):
         trails._cache.clear()
+        # Keep test responses out of the real data/overpass_cache (a fresh disk copy skips Overpass).
+        self._tmp = tempfile.TemporaryDirectory()
+        patcher = patch.object(trails, "DISK_CACHE_DIR", Path(self._tmp.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._tmp.cleanup)
 
     def test_stitch_reverses_and_prepends_segments(self):
         a, b, c, d = [0, 0], [0, 1], [0, 2], [0, 3]
@@ -33,7 +46,7 @@ class TrailTests(unittest.TestCase):
                 {"type": "way", "geometry": [{"lat": 42.04, "lon": -83}, points[-1]]},
             ]},
         ]
-        fetch.return_value = io.StringIO(json.dumps({"elements": elements}))
+        fetch.return_value = _Response(json.dumps({"elements": elements}))
         result = trails.get_trails(42, -83, 15)
         self.assertEqual([item["name"] for item in result], ["Named path", "Hiking route"])
         self.assertAlmostEqual(result[1]["distance_km"], 4.448, places=3)
@@ -41,7 +54,7 @@ class TrailTests(unittest.TestCase):
         result[0]["name"] = "Changed"
         self.assertEqual(trails.get_trails(42, -83, 15)[0]["name"], "Named path")
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.kwargs["timeout"], 30)
+        self.assertEqual(fetch.call_args.kwargs["timeout"], trails.TIMEOUT_SECONDS)
 
     @patch.object(trails, "urlopen")
     def test_upstream_failure_becomes_502_and_is_not_cached(self, fetch):

@@ -3,7 +3,7 @@
 from copy import deepcopy
 from math import asin, cos, degrees, isfinite, radians, sin, sqrt
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 import json
 import hashlib
 import logging
@@ -19,12 +19,14 @@ OVERPASS_ENDPOINTS = (
     "https://overpass.kumi.systems/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
-USER_AGENT = "TrailScout-hackathon/0.1 (contact: example@example.com)"
+USER_AGENT = "TreeScout hackathon (contact: treescout-team)"  # the example.com placeholder got HTTP 406
 ROOT = Path(__file__).resolve().parents[2]
 DISK_CACHE_DIR = ROOT / "data" / "overpass_cache"
 YPSILANTI_FIXTURE = ROOT / "tests" / "fixtures" / "overpass_ypsilanti.json"
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
+DISK_FRESH_SECONDS = 24 * 3600  # trail geometry changes rarely; skip Overpass if the disk copy is newer
+TIMEOUT_SECONDS = 12
 _cache = {}
 _lock = Lock()
 
@@ -146,6 +148,15 @@ def get_trails(lat, lon, radius_km=10):
                 del _cache[key]
         if bbox in _cache:
             return deepcopy(_cache[bbox][1])
+        try:
+            if time() - cache_file.stat().st_mtime < DISK_FRESH_SECONDS:
+                trails = _parse_trails(json.loads(cache_file.read_text(encoding="utf-8")))
+                logger.info("Using Overpass response saved %.0f min ago: %s",
+                            (time() - cache_file.stat().st_mtime) / 60, cache_file.name)
+                _cache[bbox] = (monotonic(), trails)
+                return deepcopy(trails)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # missing or unreadable: query live below
         query = (
             '[out:json][timeout:25];('
             f'relation["route"="hiking"]({bounds});'
@@ -161,7 +172,7 @@ def get_trails(lat, lon, radius_km=10):
                          "Content-Type": "application/x-www-form-urlencoded"},
             )
             try:
-                with urlopen(request, timeout=30) as response:
+                with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
                     if response.status != 200:
                         raise ValueError(f"HTTP {response.status}")
                     payload = json.load(response)
@@ -194,7 +205,7 @@ def get_trails(lat, lon, radius_km=10):
                 break
             else:
                 raise OverpassError(
-                    "All Overpass endpoints failed (30-second timeout per endpoint), "
+                    f"All Overpass endpoints failed ({TIMEOUT_SECONDS}-second timeout per endpoint), "
                     "and no usable cached response or matching fixture is available. "
                     + "; ".join(failures)
                 )
