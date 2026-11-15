@@ -47,6 +47,7 @@ const els = {
   caption: $("#caption"),
   turnback: $("#turnback"),
   turnbackText: $("#turnback-text"),
+  turnbackEta: $("#turnback-eta"),
   hikeBar: $("#hike-bar"),
   hikeProgress: $("#hike-bar .hike-progress"),
   hikeProgressFill: $("#hike-progress-fill"),
@@ -983,11 +984,12 @@ const PACE_MIN = 0.5, PACE_MAX = 1.5, PACE_SLOW = 0.6, PACE_FAST = 1.3;
 const LATE_CHECK_MS = 3000;
 const TURN_BACK_FALLBACK = "You're behind schedule. Turn back now to finish before sunset.";
 // Late rule, identical to backend/narration.py check_late_pace (used here when /narrate/late is unavailable):
-// late when (start + elapsed) + remaining_km * current pace + LATE_BUFFER_MIN > sunset.
-// "current pace" there is the average so far (elapsed / km hiked), so after speeding up the hiker is back on
-// schedule once the average has recovered, not the moment the slider moves.
+// late when now + remaining_km * pace + LATE_BUFFER_MIN > sunset + LATE_ROUNDING_MIN, now = start + elapsed.
+// We always send the pace being simulated right now (current_pace_min_per_km), so speeding up clears a late
+// episode at the next check. Without it the backend uses the average so far (elapsed / km).
 const LATE_BUFFER_MIN = 30;
-const LATE_MIN_KM = 0.25; // too early to judge pace before this
+const LATE_ROUNDING_MIN = 0.5; // whole-minute times: a zero-slack plan on pace must not flicker late
+const LATE_MIN_KM = 0.25; // average-pace mode only: too early to judge before this
 // Fixed voice cues, pre-fetched when a plan loads and kept for the page. The late text itself only arrives
 // with /narrate/late; the short TURN BACK cue plays instantly while it downloads.
 const TURN_BACK_CUE = "Turn back now.";
@@ -1377,6 +1379,15 @@ function hikeFrame(ts) {
   renderHike();
 }
 
+/** "Head back now: back at the trailhead about 16:52, 19 min before sunset." (at the current pace) */
+function headBackNowText(clock) {
+  const arrive = Math.round(clock + hike.posKm / kmPerMin()); // whole minutes, like the arrival readout
+  const vs = hike.sunsetMin === null ? ""
+    : hike.sunsetMin - arrive >= 0 ? `, ${fmtLeft(hike.sunsetMin - arrive)} before sunset`
+    : `, ${fmtLeft(arrive - hike.sunsetMin)} after sunset`;
+  return `Head back now: back at the trailhead about ${minToHhmm(arrive)}${vs}.`;
+}
+
 function fmtLeft(min) {
   const m = Math.floor(Math.abs(min));
   return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`;
@@ -1419,7 +1430,7 @@ function renderHike() {
   // Heading back: (projected) arrival at the trailhead vs sunset
   els.simEtaBox.hidden = !back;
   if (back) {
-    const arrive = hike.state === "done" ? clock : clock + hike.posKm / kmPerMin();
+    const arrive = Math.round(hike.state === "done" ? clock : clock + hike.posKm / kmPerMin());
     const vsSunset = hike.sunsetMin === null ? ""
       : hike.sunsetMin - arrive >= 0 ? ` · ${fmtLeft(hike.sunsetMin - arrive)} before sunset`
       : ` · ${fmtLeft(arrive - hike.sunsetMin)} after sunset`;
@@ -1430,6 +1441,8 @@ function renderHike() {
       els.hikeNote.hidden = false;
     }
   }
+
+  if (!els.turnback.hidden && !back) els.turnbackEta.textContent = headBackNowText(clock);
 
   els.simPlay.textContent = { idle: "▶ Simulate hike", running: "❚❚ Pause", paused: "▶ Resume",
                               done: "↺ Simulate again" }[hike.state];
@@ -1451,12 +1464,15 @@ function stopLateChecks() {
 }
 
 /** Same rule as the backend's check_late_pace. Returns {late, text?}. */
-function isLateLocally({ startMin, sunsetMin, sunsetText, totalKm, currentKm, elapsedMin }) {
+function isLateLocally({ startMin, sunsetMin, sunsetText, totalKm, currentKm, elapsedMin, paceMinPerKm }) {
   if (startMin === null || sunsetMin === null) return { late: false };
-  if (!(totalKm > 0) || !(elapsedMin > 0) || !(currentKm >= LATE_MIN_KM)) return { late: false };
-  const pace = elapsedMin / currentKm; // current minutes per km
+  if (!(totalKm > 0) || !(elapsedMin >= 0) || !(currentKm >= 0)) return { late: false };
+  let pace;
+  if (paceMinPerKm > 0 && Number.isFinite(paceMinPerKm)) pace = paceMinPerKm;          // walking right now
+  else if (elapsedMin > 0 && currentKm >= LATE_MIN_KM) pace = elapsedMin / currentKm;  // average so far
+  else return { late: false };
   const finishMin = startMin + elapsedMin + Math.max(0, totalKm - currentKm) * pace;
-  if (finishMin + LATE_BUFFER_MIN > sunsetMin) {
+  if (finishMin + LATE_BUFFER_MIN > sunsetMin + LATE_ROUNDING_MIN) {
     return { late: true,
              text: `You're behind schedule. Turn back now to reach the trailhead before sunset at ${sunsetText}.` };
   }
@@ -1467,10 +1483,11 @@ async function checkLate() {
   if (hike.direction !== "out" || hike.state !== "running") return;
   if (hike.lateInFlight) { hike.lateAgain = true; return; } // e.g. pace changed mid-request: check again after
   const gen = hike.gen;
-  const currentKm = Math.round(hike.posKm * 100) / 100;
-  const elapsedMin = Math.round(hike.elapsedMin * 10) / 10;
-  const local = () => isLateLocally({ startMin: hike.planStartMin, sunsetMin: hike.sunsetMin,
-                                      sunsetText: hike.sunsetText, totalKm: hike.totalKm, currentKm, elapsedMin });
+  const currentKm = Math.round(hike.posKm * 1000) / 1000;
+  const elapsedMin = Math.round(hike.elapsedMin * 100) / 100;
+  const paceMinPerKm = Math.round((1 / kmPerMin()) * 1000) / 1000; // the pace being simulated now
+  const local = () => isLateLocally({ startMin: hike.planStartMin, sunsetMin: hike.sunsetMin, sunsetText: hike.sunsetText,
+                                      totalKm: hike.totalKm, currentKm, elapsedMin, paceMinPerKm });
   hike.lateInFlight = true;
   try {
     let result;
@@ -1480,7 +1497,8 @@ async function checkLate() {
       try {
         const response = await fetch(LATE_URL, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: hike.plan, current_km: currentKm, elapsed_min: elapsedMin }),
+          body: JSON.stringify({ plan: hike.plan, current_km: currentKm, elapsed_min: elapsedMin,
+                                 current_pace_min_per_km: paceMinPerKm }),
         });
         if (!response.ok) throw new Error(`${LATE_URL} returned ${response.status}`);
         result = await response.json();
@@ -1509,7 +1527,7 @@ function turnBack(text, gen) {
   els.onSchedule.hidden = true;
   els.turnbackText.textContent = text;
   els.turnback.hidden = false;
-  renderHike();
+  renderHike(); // fills the head-back projection (and keeps it current while the banner shows)
   const spoken = fetchTts(text, undefined, hike.planGen); // starts now, downloads while the cue plays
   enqueueLine({ text: TURN_BACK_CUE, url: cue(TURN_BACK_CUE), gen }, { interrupt: true });
   enqueueLine({ text, url: spoken, gen });

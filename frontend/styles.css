@@ -667,6 +667,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 }
 .turnback-title { display: block; font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 600; letter-spacing: 0.06em; line-height: 1.1; }
 .turnback-text { margin: var(--space-2) 0 0; color: var(--accent-ink); font-size: 1rem; }
+.turnback-eta { margin: var(--space-2) 0 0; color: var(--accent-ink); font-size: 0.95rem; font-weight: 600; }
 .turnback-btn { margin-top: var(--space-3); color: var(--ink); background: var(--bg); border-color: var(--accent-ink); font-weight: 600; }
 .turnback-btn:hover { filter: brightness(1.2); border-color: var(--accent-ink); }
 
