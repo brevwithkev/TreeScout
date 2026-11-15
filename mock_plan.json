@@ -1,14 +1,31 @@
 {
   "request": "5 mile shaded hike near Ann Arbor tomorrow",
+  "constraints": {"distance_km": 8.0, "date": "2026-11-15", "start": "10:00",
+                  "prefs": ["shaded"], "parsed_by": "gemini"},
   "trail": {"name": "Example Loop", "osm_id": 0, "distance_km": 8.1, "elevation_gain_m": 60,
-            "coords": [[42.37, -83.91], [42.375, -83.915], [42.38, -83.92]]},
+            "coords": [[42.370, -83.910], [42.372, -83.912], [42.374, -83.914], [42.376, -83.915],
+                       [42.378, -83.917], [42.380, -83.920], [42.379, -83.923], [42.377, -83.921],
+                       [42.375, -83.918], [42.372, -83.915], [42.370, -83.910]]},
+  "alternatives": [
+    {"name": "Acorn Nature Trail", "osm_id": 1, "distance_km": 6.2, "score": 0.81},
+    {"name": "River Bend Path", "osm_id": 2, "distance_km": 9.4, "score": 0.74}
+  ],
+  "explanation": "Closest to 5 miles, a loop, and you're back 2 hours before sunset.",
   "timing": {"start": "10:00", "est_duration_min": 120, "sunset": "17:08",
              "latest_safe_start": "14:38", "turnaround_by": "15:40"},
   "weather": {"source": "NWS", "summary": "Cloudy, 41F", "precip_chance": 20},
   "climate": {"source": "NASA POWER", "years": "2005-2025", "avg_high_c": 8.2, "avg_low_c": 0.5, "avg_precip_mm": 2.1},
+  "space_weather": {"source": "NASA DONKI", "kp_max": 3, "aurora_chance": "low", "checked_at": "2026-11-14T20:14:00Z"},
   "hazards": [],
   "hazards_checked_at": "2026-11-14T20:14:00Z",
   "reports": [],
+  "agent_trace": [
+    {"agent": "planner", "step": "tool", "tool": "get_trails", "summary": "Found 14 named trails within 10 km", "ms": 120},
+    {"agent": "planner", "step": "tool", "tool": "get_hazards", "summary": "No active NASA EONET events within 100 km", "ms": 840},
+    {"agent": "checker", "step": "reject", "summary": "River Bend Path: turnaround 16:55 is after the 16:38 safe limit"},
+    {"agent": "planner", "step": "decide", "summary": "Chose Example Loop (score 0.86)"}
+  ],
+  "checker": {"approved": true, "rounds": 2},
   "narration": [{"coord_index": 0, "text": "Welcome to the trailhead. Sunset is at 5:08 PM."}],
   "warnings": [],
   "flood_or_burn_layer": null

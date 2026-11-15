@@ -7,16 +7,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
     <link rel="stylesheet" href="/styles.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
     <script src="/app.js" defer></script>
   </head>
-  <body>
-    <main>
-      <p class="eyebrow">Explore with context</p>
-      <h1>TreeScout</h1>
-      <p>A hiking route planner combining NASA data, an AI agent, and a voice trail guide.</p>
-      <p id="status" role="status">Checking backend…</p>
-      <p class="note">Project scaffold ready. Route planning and voice guidance are coming next.</p>
-    </main>
+  <body class="app">
+    <div class="app-shell">
+      <aside class="panel" aria-label="Plan a hike">
+        <header class="panel-head">
+          <p class="eyebrow">Explore with context</p>
+          <h1 class="brand">Tree<span>Scout</span></h1>
+          <p id="status" class="status" role="status">Checking backend…</p>
+        </header>
+
+        <form id="plan-form" class="plan-form">
+          <label for="request" class="label">Hike request</label>
+          <textarea id="request" name="request" rows="4" required
+                    placeholder="e.g. 5 mile shaded hike near Ann Arbor tomorrow">5 mile shaded hike near Ann Arbor tomorrow</textarea>
+
+          <label class="check">
+            <input type="checkbox" id="use-mock" checked>
+            <span>Use mock data</span>
+          </label>
+
+          <button type="submit" id="plan-btn" class="btn btn--primary">Plan</button>
+        </form>
+
+        <section id="info" class="info" aria-live="polite" aria-busy="false">
+          <p class="info-empty">Describe a hike and press Plan.</p>
+        </section>
+      </aside>
+
+      <div class="map-wrap">
+        <div id="map" role="region" aria-label="Trail map"></div>
+      </div>
+    </div>
   </body>
 </html>

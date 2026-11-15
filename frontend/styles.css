@@ -134,17 +134,61 @@ h1 {
    Components for the upcoming app UI (styled now, used once markup exists)
    ========================================================================== */
 
-/* ---------- App shell: top bar + side panel + map ---------- */
+/* ---------- App shell: side panel (~30%) + map (~70%) ---------- */
 
 body.app { padding: 0; height: 100vh; overflow: hidden; }
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) 1fr;
-  grid-template-rows: auto 1fr;
-  grid-template-areas: "top top" "panel map";
+  grid-template-columns: minmax(300px, 30%) 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "panel map";
   height: 100vh;
 }
+.app-shell:has(.topbar) {
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "top top" "panel map";
+}
+
+.panel-head { padding: var(--space-5) var(--space-4) var(--space-3); border-bottom: 1px solid var(--line); }
+.panel-head .brand { font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 var(--space-2); }
+.panel-head .brand span { color: var(--accent); }
+.panel-head .eyebrow { margin-bottom: var(--space-1); }
+.status { font-size: 0.85rem; margin: 0; }
+
+.plan-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--line); }
+.plan-form textarea { resize: vertical; min-height: 5rem; }
+.check { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--ink-2); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+
+.info { flex: 1; overflow-y: auto; padding: var(--space-4); }
+.info-empty { color: var(--ink-3); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.trail-name { font-size: 1.1rem; font-weight: 600; margin: 0; }
+
+.loading { display: flex; align-items: center; gap: var(--space-3); color: var(--ink-2); }
+.spinner {
+  flex: none;
+  width: 20px; height: 20px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+.error-box {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bad) 14%, var(--surface));
+  border: 1px solid var(--bad);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  overflow-wrap: anywhere;
+}
+.error-box strong { color: var(--bad); }
+.error-box strong::before { content: "✕ "; }
 
 .topbar {
   grid-area: top;
@@ -332,8 +376,16 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 .leaflet-container a.leaflet-popup-close-button { color: var(--ink-3); }
 
 /* Trail markers (use L.divIcon with these classes) */
-.marker { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--bg); background: var(--ink); box-shadow: var(--shadow); }
-.marker--start  { background: var(--accent); }
+.marker {
+  display: grid; place-items: center;
+  width: 24px; height: 24px;
+  font: 600 0.72rem/1 var(--font-mono);
+  color: var(--bg);
+  border-radius: 50%; border: 2px solid var(--bg);
+  background: var(--ink); box-shadow: var(--shadow);
+}
+.marker--start  { background: var(--accent); color: var(--accent-ink); }  /* "S" */
+.marker--end    { background: var(--ink); }                               /* "E" */
 .marker--hiker  { background: var(--ink); outline: 3px solid var(--accent-soft); }
 
 /* ---------- Hike bar (floats over the bottom of the map) ---------- */
