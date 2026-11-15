@@ -27,8 +27,9 @@ YPSILANTI_FIXTURE = ROOT / "tests" / "fixtures" / "overpass_ypsilanti.json"
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
 DISK_FRESH_SECONDS = 24 * 3600  # trail geometry changes rarely; skip Overpass if the disk copy is newer
-TIMEOUT_SECONDS = 12
-HEDGE_SECONDS = 4  # start the next mirror if the current one hasn't answered by then
+OVERPASS_BUDGET_SECONDS = 8  # all live Overpass attempts together; then saved copies or an error
+TIMEOUT_SECONDS = 8          # per request (abandoned requests end on their own)
+HEDGE_SECONDS = 2.5          # start the next mirror if the current one hasn't answered by then
 _cache = {}
 _lock = Lock()
 
@@ -141,17 +142,22 @@ def _query_endpoint(endpoint, query):
 
 def _query_hedged(query, failures):
     """Hedged requests: start the first endpoint, and start the next one after HEDGE_SECONDS without an
-    answer (or right away after a failure). The first success wins. Returns (endpoint, payload, trails)
-    or None, appending each failure to ``failures``. Worst case is about TIMEOUT + 2 * HEDGE seconds
-    instead of 3 * TIMEOUT."""
+    answer (or right away after a failure). The first success wins. Everything together gives up after
+    OVERPASS_BUDGET_SECONDS; mirrors still running then are abandoned. Returns (endpoint, payload, trails)
+    or None, appending each failure to ``failures``."""
     pool = ThreadPoolExecutor(max_workers=len(OVERPASS_ENDPOINTS), thread_name_prefix="overpass")
+    deadline = monotonic() + OVERPASS_BUDGET_SECONDS
     try:
         pending, queue = {}, list(OVERPASS_ENDPOINTS)
         while queue or pending:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
             if queue:  # each pass follows a hedge timeout or a failure: start the next mirror
                 endpoint = queue.pop(0)
                 pending[pool.submit(_query_endpoint, endpoint, query)] = endpoint
-            done, _ = wait(pending, timeout=HEDGE_SECONDS if queue else None, return_when=FIRST_COMPLETED)
+            done, _ = wait(pending, timeout=min(HEDGE_SECONDS, remaining) if queue else remaining,
+                           return_when=FIRST_COMPLETED)
             for future in done:
                 endpoint = pending.pop(future)
                 try:
@@ -162,6 +168,9 @@ def _query_hedged(query, failures):
                     logger.warning("Overpass endpoint failed: %s", message)
                     continue
                 return endpoint, payload, trails
+        for endpoint in pending.values():
+            failures.append(f"{endpoint}: no answer within {OVERPASS_BUDGET_SECONDS} s")
+            logger.warning("Overpass endpoint abandoned after %s s: %s", OVERPASS_BUDGET_SECONDS, endpoint)
         return None
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -233,8 +242,7 @@ def get_trails(lat, lon, radius_km=10):
                 break
             else:
                 raise OverpassError(
-                    f"All Overpass endpoints failed ({TIMEOUT_SECONDS}-second timeout per endpoint, "
-                    f"staggered {HEDGE_SECONDS} s apart), "
+                    f"Overpass returned no trail data within {OVERPASS_BUDGET_SECONDS} s, "
                     "and no usable cached response or matching fixture is available. "
                     + "; ".join(failures)
                 )

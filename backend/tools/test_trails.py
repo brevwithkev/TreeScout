@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -61,6 +63,24 @@ class TrailTests(unittest.TestCase):
             trails.get_trails(42, -83, 15)
         self.assertIn("429", str(caught.exception))
         self.assertFalse(trails._cache)
+
+    def test_hanging_mirrors_give_up_within_the_budget(self):
+        self.assertEqual(trails.OVERPASS_BUDGET_SECONDS, 8)
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def hang(*_args, **_kwargs):
+            release.wait(30)
+            raise OSError("released")
+
+        with patch.object(trails, "urlopen", hang), patch.object(trails, "OVERPASS_BUDGET_SECONDS", 1), \
+                patch.object(trails, "HEDGE_SECONDS", 0.3):
+            started = time.perf_counter()
+            with self.assertRaises(trails.OverpassError) as caught:
+                trails.get_trails(42, -83, 15)
+            elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 1.5)
+        self.assertIn("no answer within 1 s", str(caught.exception))
 
     def test_plan_builds_contract_from_tools_without_mock_values(self):
         """POST /plan, offline: fake tools, no Gemini key -> rule-based planner."""
