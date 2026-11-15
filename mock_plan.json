@@ -56,5 +56,7 @@
                "Unusual conditions: About 9F colder than normal for this week (forecast high 38F vs normal 47F); dress for it."],
   "flood_or_burn_layer": null,
   "place": {"name": "Ann Arbor", "lat": 42.2808, "lon": -83.743, "display_name": "Ann Arbor, Michigan, United States",
-            "country": "United States"}
+            "country": "United States"},
+  "briefing": {"text": "Example Loop is an 8.1 km loop of about 120 min with 60 m of climbing, back well before the 17:08 sunset. Expect 31-38F with a slight chance of snow showers while a Winter Weather Advisory is in effect.",
+               "source": "gemini"}
 }

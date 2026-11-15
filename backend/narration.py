@@ -155,6 +155,9 @@ def generate_narration(plan):
     hazard = top_hazard_phrase(plan)
     if hazard:
         welcome += f" {hazard}"
+    briefing = plan.get("briefing")
+    if isinstance(briefing, dict) and str(briefing.get("text") or "").strip():
+        welcome += f" {str(briefing['text']).strip()}"  # the AI trail briefing (or its template)
     points = [{"coord_index": 0, "km": 0.0, "kind": "trailhead", "text": welcome}]
 
     half_km = round(total_km / 2.0, 2)

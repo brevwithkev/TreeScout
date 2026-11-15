@@ -36,7 +36,88 @@ Keys in `.env` (all optional; anything missing falls back gracefully):
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL` | Voice guide (`/tts`); model defaults to `eleven_flash_v2_5` | Captions without audio |
 | `DEMO_MODE`, `DEMO_RECORD` | Replay / record demo plans (see below) | `0` (off) |
 
-### Demo mode
+### MongoDB Atlas hike history
+
+Add `MONGODB_URI` (Atlas Connect → Drivers → Python connection string) and
+`MONGODB_DB=trekchek` to the backend `.env`. Never put the URI in frontend code or commit it.
+Use an Atlas database user with read/write access to `trekchek`, and add the backend
+machine's public IP to the Atlas network access list. URL-encode special characters
+in the database password when inserting it into the connection string.
+
+```powershell
+python -m pip install -r backend/requirements.txt
+python -m backend.history  # real Atlas save/list/retrieve, then removes only its own test records
+python -m uvicorn backend.main:app --reload
+```
+
+Generate a hike, click **Save current hike**, refresh the browser, then choose it
+from **My saved hikes**. Saved plans are snapshots: their weather and warnings are
+not refreshed, and the page labels them accordingly. History is separate from
+`POST /plan`, so an Atlas failure cannot fail a planning request.
+
+History is scoped to a random browser credential in localStorage, not a login.
+Clearing browser storage loses access; another browser does not share this history.
+Use HTTPS when deployed. This is a hackathon MVP; account login and write rate
+limits are still needed for a public production rollout.
+
+API: `POST /history` with `{plan}`, `GET /history?limit=20&before=<next_before>`,
+and `GET /history/{id}`. All require the `X-History-Token` browser credential.
+The UI lists the most recent 20 saves; the API supports pagination.
+The credential is 32 cryptographically random bytes encoded as 64 lowercase hex
+characters. Only its SHA-256 hash is stored in Atlas. Pagination uses an opaque
+`next_before` cursor (time plus ID), so simultaneous saves are not skipped.
+Snapshots are limited to 2 MB; connection and operation deadlines are bounded.
+The compound owner/time/ID index is created lazily on the first history operation.
+
+Offline regression tests (MongoDB is simulated, no Atlas account needed):
+
+```powershell
+python -m pip install -r backend/requirements-dev.txt
+python -m unittest backend.test_history backend.test_weather_coverage
+```
+
+Full offline suite (fixtures and mongomock; no real Atlas/Gemini/ElevenLabs calls):
+
+```powershell
+$env:GEMINI_API_KEY = ' '; $env:DEMO_RECORD = '0'
+python -m unittest discover -s backend -t . -p 'test_*.py'
+node --check frontend/app.js
+node --check frontend/history.js
+```
+
+Start a separate server on port **8011** with those environment variables and
+`DEMO_MODE=0` (`python -m uvicorn backend.main:app --port 8011`). Do not use the
+developer's port 8000 for tests. Then run:
+
+```powershell
+python -m unittest discover -s tests -p '*_test.py'
+python tests/golden.py --url http://127.0.0.1:8011
+python -m pip install -r backend/requirements-browser.txt
+python tests/browser_history.py
+# Optional real Chrome + Atlas test, with the network-enabled test server running:
+python tests/browser_atlas.py
+```
+
+Browser regressions use real headless Chrome/Edge with mocked API responses and
+blocked third-party map/audio requests; they are not an Atlas integration test.
+Set `TREKCHEK_BROWSER_EXECUTABLE` to a browser path if neither is detected, or
+install Playwright Chromium with `python -m playwright install chromium`.
+`python -m backend.history` separately verifies actual Atlas operations without
+printing the URI, credential, or browser token. An Atlas connection failure usually
+requires checking the database user's permissions and the backend IP access list.
+
+Forecast windows require continuous timestamp coverage, including both endpoints
+and every interior interval. MET uses explicit `next_1_hours`, `next_6_hours`, or
+`next_12_hours` aggregation periods; `instant` values are point samples, and the
+final point does not extend coverage. When aggregated precipitation cannot be
+assigned to the exact hike window without double counting or dividing a period,
+the amount remains unknown. See [MET's interval semantics](https://api.met.no/doc/ForecastJSON).
+Incomplete hourly data uses the existing unavailable section and is labeled as
+not checked in the UI/briefing. Existing daily-weather fallback policy is preserved.
+Briefing character limits apply only to optional model prose; all warnings and
+checker rejection reasons are preserved ahead of it, including in no-trail plans.
+
+### Demo recordings
 
 Two switches, both off by default:
 
@@ -80,7 +161,7 @@ python tests/golden.py --url http://127.0.0.1:8011         # golden prompts agai
 python -m unittest discover -s tests -p "*_test.py"         # smoke + no-mock-values checks (server running)
 ```
 
-To keep Gemini quota for demos, run the golden prompts against a server started with `GEMINI_API_KEY` empty.
+To keep Gemini quota for demos, run golden prompts with `GEMINI_API_KEY` set to a single space (an empty variable on Windows lets `.env` reload the real key).
 
 ## Architecture
 

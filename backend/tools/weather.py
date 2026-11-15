@@ -8,6 +8,7 @@ import re
 import time
 
 from backend.tools import common
+from backend.tools.coverage import covers, utc
 from backend.tools.common import (cache_get, cache_put, get_json, get_json_within, now_iso, parse_date, retry_once,
                                   timezone_for, unavailable)
 
@@ -117,15 +118,20 @@ def hourly_periods(lat, lon):
 def hike_window(periods, date, start, est_duration_min, tz=TZ):
     """Summarize the hourly periods that overlap [start, start + duration) on date (local time in tz).
     Returns the result dict without source/checked_at, or None when no period overlaps."""
-    begin = datetime.combine(parse_date(date), datetime.strptime(str(start)[:5], "%H:%M").time(), tzinfo=tz)
+    begin = utc(datetime.combine(parse_date(date), datetime.strptime(str(start)[:5], "%H:%M").time(), tzinfo=tz))
     end = begin + timedelta(minutes=max(1, int(est_duration_min)))
     overlap = []
     for p in periods:
-        p_start, p_end = datetime.fromisoformat(p["startTime"]), datetime.fromisoformat(p["endTime"])
+        p_start, p_end = utc(datetime.fromisoformat(p["startTime"])), utc(datetime.fromisoformat(p["endTime"]))
         if p_start < end and p_end > begin:
             overlap.append(p)
     if not overlap:
         return None
+    # An overlap is not full coverage: reject a missing prefix, suffix, or interior gap.
+    if not covers(begin, end, [(datetime.fromisoformat(p["startTime"]), datetime.fromisoformat(p["endTime"]))
+                               for p in overlap]):
+        return None
+    overlap.sort(key=lambda p: utc(datetime.fromisoformat(p["startTime"])))
     precip = max(int((p.get("probabilityOfPrecipitation") or {}).get("value") or 0) for p in overlap)
     temps = [t for t in (_fahrenheit(p) for p in overlap) if t is not None]
     winds = [w for w in (_wind_mph(p.get("windSpeed")) for p in overlap) if w is not None]
@@ -138,7 +144,7 @@ def hike_window(periods, date, start, est_duration_min, tz=TZ):
     if wind is not None:
         bits.append(f"wind {wind} mph")
     return {
-        "window": f"{begin:%H:%M}-{end:%H:%M}",
+        "window": f"{begin.astimezone(tz):%H:%M}-{end.astimezone(tz):%H:%M}",
         "max_precip_chance": precip,
         "min_temp_f": low,
         "max_temp_f": high,
@@ -155,7 +161,7 @@ def get_hike_window(lat, lon, date, start, est_duration_min):
         hourly = hourly_periods(lat, lon)
         summary = hike_window(hourly["periods"], date, start, est_duration_min, timezone_for(lat, lon))
         if summary is None:
-            return unavailable(HOURLY_SOURCE, f"No NWS hourly forecast for {date} {start} "
+            return unavailable(HOURLY_SOURCE, f"No complete NWS hourly forecast for {date} {start} "
                                               "(the hourly forecast covers about 6 days)")
         if hourly.get("stale"):  # live check failed: the last good forecast, with its own checked_at
             return {"source": HOURLY_SOURCE, **summary, "checked_at": hourly["checked_at"], "stale": True}

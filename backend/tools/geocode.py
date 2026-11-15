@@ -10,6 +10,9 @@ One request asks for RESULTS candidates (with address details); pick_best choose
   other natural features (cliffs, valleys) last; Nominatim's own order breaks ties;
 - not when the request names a country and the result is in another one.
 If nothing qualifies: {"found": false, "reason": "not_hiking_area"} ("Couldn't find <place> as a hiking area").
+If Nominatim's own best match (or the pick) is a large region (a mountain range, continent, country, state, province
+or region, or anything else over LARGE_KM across that isn't a park, protected area, peak, trailhead or town):
+{"found": false, "reason": "large_region", "bbox": [s, n, w, e] or None, "lat", "lon"}; no trails are searched.
 """
 
 from threading import Lock
@@ -23,7 +26,9 @@ URL = "https://nominatim.openstreetmap.org/search"
 TIMEOUT = 6
 MIN_INTERVAL_S = 1.0          # Nominatim: max 1 request/second
 RESULTS = 5
-CACHE_VERSION = 3             # 3: raw candidates with address details (2: best of 5 without; 1: limit=1)
+CACHE_VERSION = 4             # 4: + bounding boxes; 3: candidates with address details; 2: best of 5; 1: limit=1
+LARGE_KM = 200                # a bounding box wider than this (diagonal) is a region, not a hiking area
+LARGE_TYPES = {"continent", "country", "state", "province", "region", "state_district", "archipelago", "territory"}
 PREFERRED = {                 # (class, type) -> rank 0; other kept results 1, other natural features 2
     ("highway", "trailhead"), ("boundary", "national_park"), ("boundary", "protected_area"),
     ("leisure", "park"), ("leisure", "nature_reserve"), ("natural", "peak"), ("natural", "volcano"),
@@ -90,6 +95,27 @@ def excluded(hit):
     return cls == "amenity" and typ not in AMENITIES_KEPT
 
 
+def _bbox_km(hit):
+    from backend.tools.trails import haversine  # local: trails does not import geocode
+    try:
+        s, n, w, e = (float(v) for v in hit["boundingbox"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return haversine([s, w], [n, e])
+
+
+def is_large_region(hit):
+    """A mountain range, continent, country, state, province or region, or a non-park area over LARGE_KM across."""
+    if (hit.get("class"), hit.get("type")) == ("natural", "mountain_range"):
+        return True
+    if hit.get("type") in LARGE_TYPES or hit.get("addresstype") in LARGE_TYPES:
+        return True
+    if rank(hit) == 0:  # parks, protected areas, peaks, trailheads, towns: big boxes are fine (e.g. national parks)
+        return False
+    size = _bbox_km(hit)
+    return size is not None and size > LARGE_KM
+
+
 def rank(hit):
     """0 park/protected area/reserve/peak/trailhead/settlement, 1 other, 2 other natural feature."""
     kind = (hit.get("class"), hit.get("type"))
@@ -113,7 +139,7 @@ def pick_best(hits, request_text="", place=""):
 
 
 def _trim(hit):
-    keep = ("lat", "lon", "class", "type", "addresstype", "display_name", "importance")
+    keep = ("lat", "lon", "class", "type", "addresstype", "display_name", "importance", "boundingbox")
     out = {k: hit.get(k) for k in keep if k in hit}
     address = hit.get("address") or {}
     if address:
@@ -153,6 +179,14 @@ def geocode(place, request_text=""):
     if not hits:
         return {**base, "found": False, "reason": "no_match"}
     hit = pick_best(hits, request_text, name)
+    top = hits[0]  # Nominatim's own best match: "Colorado" is the state, even if a small town is also called that
+    region = top if is_large_region(top) and not looks_like_address(request_text) else (
+        hit if hit is not None and is_large_region(hit) else None)
+    if region is not None:
+        bbox = region.get("boundingbox")
+        return {**base, "found": False, "reason": "large_region", "region": region.get("display_name") or name,
+                "lat": float(region["lat"]), "lon": float(region["lon"]),
+                "bbox": [float(v) for v in bbox] if bbox else None}
     if hit is None:
         return {**base, "found": False, "reason": "not_hiking_area"}
     country, code = country_of(hit)

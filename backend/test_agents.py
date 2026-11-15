@@ -47,6 +47,7 @@ class FakeGemini:
     def __init__(self, planner, checker=None):
         self.planner, self.checker = planner, checker
         self.calls = {"planner": 0, "checker": 0}
+        self.briefing_calls = 0
         self.chats, self.models = self, self
 
     # client.chats.create(...).send_message(...)
@@ -58,7 +59,11 @@ class FakeGemini:
         return self.planner()
 
     # client.models.generate_content(...)
-    def generate_content(self, **_):
+    def generate_content(self, **kwargs):
+        # Briefing uses the same SDK method as checking, but is a separate role.
+        if kwargs.get("config").system_instruction == agents.trail_briefing.BRIEFING_PROMPT:
+            self.briefing_calls += 1
+            return FakeReply("Follow the mapped trail. Review the warnings before hiking.")
         self.calls["checker"] += 1
         return self.checker()
 
@@ -443,8 +448,8 @@ class HazardCheckerTests(unittest.TestCase):
 
     def test_unusual_cold_is_spoken_at_the_trailhead(self):
         result = self.plan(window={"min_temp_f": 33, "max_temp_f": 37})
-        self.assertTrue(result["narration"][0]["text"].endswith("About 9F colder than normal: dress warm."),
-                        result["narration"][0]["text"])
+        self.assertIn("About 9F colder than normal: dress warm.", result["narration"][0]["text"])
+        self.assertTrue(result["narration"][0]["text"].endswith(result["briefing"]["text"]))
 
     def test_missing_power_gives_an_unavailable_anomaly(self):
         with patch("backend.agents.get_climate", lambda lat, lon, d: {"available": False, "source": "NASA POWER",

@@ -1,0 +1,151 @@
+[
+ {
+  "place_id": 330129469,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 3791973299,
+  "lat": "43.3578532",
+  "lon": "-110.9175060",
+  "class": "natural",
+  "type": "mountain_range",
+  "place_rank": 18,
+  "importance": 0.6450044924002287,
+  "addresstype": "mountain_range",
+  "name": "Rocky Mountains",
+  "display_name": "Rocky Mountains, Teton County, Wyoming, United States",
+  "address": {
+   "mountain_range": "Rocky Mountains",
+   "county": "Teton County",
+   "state": "Wyoming",
+   "ISO3166-2-lvl4": "US-WY",
+   "country": "United States",
+   "country_code": "us"
+  },
+  "boundingbox": [
+   "43.3578032",
+   "43.3579032",
+   "-110.9175560",
+   "-110.9174560"
+  ]
+ },
+ {
+  "place_id": 378063285,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 1337297383,
+  "lat": "54.2083457",
+  "lon": "-121.2582274",
+  "class": "natural",
+  "type": "mountain_range",
+  "place_rank": 18,
+  "importance": 0.16004500114442663,
+  "addresstype": "mountain_range",
+  "name": "Rocky Mountains",
+  "display_name": "Rocky Mountains, Area F (Willow River/Upper Fraser), Regional District of Fraser-Fort George, British Columbia, Canada",
+  "address": {
+   "mountain_range": "Rocky Mountains",
+   "city": "Area F (Willow River/Upper Fraser)",
+   "county": "Regional District of Fraser-Fort George",
+   "state": "British Columbia",
+   "ISO3166-2-lvl4": "CA-BC",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "54.2082957",
+   "54.2083957",
+   "-121.2582774",
+   "-121.2581774"
+  ]
+ },
+ {
+  "place_id": 379719872,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 1254514809,
+  "lat": "54.7598809",
+  "lon": "-120.9433561",
+  "class": "natural",
+  "type": "mountain_range",
+  "place_rank": 18,
+  "importance": 0.16004500114442663,
+  "addresstype": "mountain_range",
+  "name": "Rocky Mountains",
+  "display_name": "Rocky Mountains, Area D (Kiskatinaw Valley), Peace River Regional District, British Columbia, Canada",
+  "address": {
+   "mountain_range": "Rocky Mountains",
+   "city": "Area D (Kiskatinaw Valley)",
+   "county": "Peace River Regional District",
+   "state": "British Columbia",
+   "ISO3166-2-lvl4": "CA-BC",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "54.7598309",
+   "54.7599309",
+   "-120.9434061",
+   "-120.9433061"
+  ]
+ },
+ {
+  "place_id": 378911115,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 10847704429,
+  "lat": "57.2687769",
+  "lon": "-123.7845968",
+  "class": "natural",
+  "type": "peak",
+  "place_rank": 18,
+  "importance": 0.16004500114442663,
+  "addresstype": "peak",
+  "name": "Rocky Mountains",
+  "display_name": "Rocky Mountains, Area B (Finlay Valley/Beatton Valley), Peace River Regional District, British Columbia, Canada",
+  "address": {
+   "peak": "Rocky Mountains",
+   "city": "Area B (Finlay Valley/Beatton Valley)",
+   "county": "Peace River Regional District",
+   "state": "British Columbia",
+   "ISO3166-2-lvl4": "CA-BC",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "57.2687269",
+   "57.2688269",
+   "-123.7846468",
+   "-123.7845468"
+  ]
+ },
+ {
+  "place_id": 379448342,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 1279421691,
+  "lat": "54.6252650",
+  "lon": "-121.2491016",
+  "class": "natural",
+  "type": "mountain_range",
+  "place_rank": 18,
+  "importance": 0.16004500114442663,
+  "addresstype": "mountain_range",
+  "name": "Rocky Mountains",
+  "display_name": "Rocky Mountains, Area E (Moberly Lake/Sukunka Valley), Peace River Regional District, British Columbia, Canada",
+  "address": {
+   "mountain_range": "Rocky Mountains",
+   "city": "Area E (Moberly Lake/Sukunka Valley)",
+   "county": "Peace River Regional District",
+   "state": "British Columbia",
+   "ISO3166-2-lvl4": "CA-BC",
+   "country": "Canada",
+   "country_code": "ca"
+  },
+  "boundingbox": [
+   "54.6252150",
+   "54.6253150",
+   "-121.2491516",
+   "-121.2490516"
+  ]
+ }
+]

@@ -456,7 +456,7 @@ async function onPlan(event) {
 let traceTimer = null;
 let currentPlan = null; // { request, mock } of the plan on screen, for "Other options"
 
-function renderPlan(plan, mock) {
+function renderPlan(plan, mock, savedAt = null) {
   currentPlan = { request: str(plan.request) || els.request.value.trim(), mock: !!mock };
   clearTimeout(traceTimer);
   fillForm(plan.constraints);
@@ -470,10 +470,11 @@ function renderPlan(plan, mock) {
 
   const hazards = renderHazards(plan, coords ? coords[0] : where || DEFAULT_CENTER); // {eonet, serious}
   renderSources(plan);
-  renderModeBadges(plan, mock);
+  renderModeBadges(plan, mock, savedAt);
 
   fill(els.results,
-    hazardsSummary(hazards), // short alert banner first: NWS alert Moderate or worse, or EONET events nearby
+    briefingCard(plan),      // AI trail briefing at the very top
+    hazardsSummary(hazards), // short alert banner: NWS alert Moderate or worse, or EONET events nearby
     warningsBanner(plan.warnings),
     trailCard(plan, coords),
     timingCard(plan),
@@ -484,18 +485,21 @@ function renderPlan(plan, mock) {
     reportsCard(plan),
     traceCard(plan),
   );
+  window.dispatchEvent(new CustomEvent("trekchek:plan", { detail: { plan, mock: !!mock, savedAt } }));
 }
 
 function setLoading(on, mock) {
   els.button.disabled = on;
   els.results.setAttribute("aria-busy", String(on));
   if (on) {
+    window.dispatchEvent(new CustomEvent("trekchek:loading"));
     clearTimeout(traceTimer);
     hikeUnload(); // stop the old route's simulation and audio while the new plan loads
     els.results.replaceChildren(
       el("div", { class: "loading" },
         el("span", { class: "spinner", "aria-hidden": "true" }),
         el("span", {}, mock === "switch" ? "Switching to that trail…"
+                         : mock === "history" ? "Loading saved hike…"
                          : mock === "demo" ? "Loading recorded plan…"
                          : mock ? "Loading mock plan…" : "Planning… finding trails can take up to a minute.")),
     );
@@ -509,13 +513,16 @@ function showError(message) {
   );
 }
 
-function renderModeBadges(plan, mock) {
+function renderModeBadges(plan, mock, savedAt = null) {
   const partial = ["trail", "timing", "weather", "climate", "space_weather", "checker", "alerts", "hike_window", "seasonal"]
     .some((k) => isObj(plan[k]) && plan[k].available === false);
   const recordedAt = str(plan.demo_recorded_at);
   const recordedLocal = recordedAt && fmtLocal(recordedAt);
   fill(els.modeBadges,
-    recordedLocal
+    savedAt
+      ? el("span", { class: "badge badge--recorded", title: "Weather and warnings have not been refreshed" },
+           "Saved snapshot from ", el("time", { datetime: savedAt }, fmtLocal(savedAt)), " · not live")
+      : recordedLocal
       ? el("span", { class: "badge badge--recorded", title: "Saved by demo mode; not live data" },
            "Recorded data from ", el("time", { datetime: recordedAt }, recordedLocal))
       : el("span", { class: `badge ${mock ? "badge--mock" : "badge--live"}` }, mock ? "Mock data" : "Live"),
@@ -549,6 +556,18 @@ function kv(rows) {
 }
 
 /* ---------- Plan-tab cards ---------- */
+
+/** "AI trail briefing" at the top of the Plan tab (plan.briefing; absent in older recordings). */
+function briefingCard(plan) {
+  const b = isObj(plan.briefing) ? plan.briefing : null;
+  const text = b && str(b.text);
+  if (!text) return null;
+  const by = str(b.source) === "gemini" ? "Gemini, every number checked against the plan" : "Template from the plan data";
+  return el("section", { class: "briefing", "aria-label": "AI trail briefing" },
+    el("h2", { class: "briefing-title" }, el("span", { "aria-hidden": "true" }, "✦ "), "AI trail briefing"),
+    el("p", { class: "briefing-text" }, text),
+    el("p", { class: "source-line" }, `Source: ${by}`));
+}
 
 function warningsBanner(warnings) {
   const list = (Array.isArray(warnings) ? warnings : [])
@@ -632,14 +651,15 @@ function weatherCard(plan) {
   const pct = w ? toNum(w.precip_chance) : NaN;
   const daily = w ? kv([
     ["Forecast", str(w.summary)],
-    ["Precipitation chance", Number.isFinite(pct) ? `${Math.round(pct)}%` : null],
+    ["Precipitation chance", Number.isFinite(pct) ? `${Math.round(pct)}%`
+      : str(w.source) === "MET Norway" ? "Not given (MET Norway forecasts amounts)" : null],
   ]) : unavailable("Daily forecast unavailable");
   const day = isObj(plan.constraints) ? fmtDay(plan.constraints.date) : null;
   const date = (w && fmtLocal(w.checked_at)) || (day && `forecast for ${day}`);
   return card("Weather", { body: el("div", {}, hikeWindowBlock(plan), daily), source: (w && str(w.source)) || "NWS", date });
 }
 
-/** "During your hike: 20% rain, 38-44F, wind 10 mph" from plan.hike_window (NWS hourly). */
+/** "During your hike: 20% rain, 38-44F, wind 10 mph" from plan.hike_window (NWS hourly, or MET Norway abroad). */
 function hikeWindowBlock(plan) {
   const hw = phaseH(plan, "hike_window");
   if (hw.state === "missing") {

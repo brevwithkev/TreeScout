@@ -19,6 +19,7 @@ import logging
 import os
 import re
 
+from backend import briefing as trail_briefing
 from backend.narration import generate_narration
 from backend.tools.alerts import get_nws_alerts
 from backend.tools.climate import get_climate
@@ -28,13 +29,14 @@ from backend.tools.conditions import derive_conditions
 from backend.tools.elevation import get_elevation_gain
 from backend.tools.geocode import US_CODES, clean_place, geocode
 from backend.tools.hazards import get_hazards
+from backend.tools.met import get_met_hike_window, get_met_weather
 from backend.tools.ranking import _is_loop, rank_trails
 from backend.tools.route import make_route, route_km
 from backend.tools.elevation import cached_entry
 from backend.tools.seasonal import get_seasonal_hazards
 from backend.tools.space_weather import get_space_weather
 from backend.tools.timing import compute_timing
-from backend.tools.trails import get_trails, get_trails_anywhere, haversine
+from backend.tools.trails import get_trails, get_trails_anywhere, haversine, seeds_in_region
 from backend.tools.weather import get_hike_window, get_weather
 
 logger = logging.getLogger("treescout.agents")
@@ -54,6 +56,8 @@ MAX_ROUNDS = 2
 NOT_FOUND = "Couldn't find {place}"
 LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
 NOT_HIKING_AREA = "Couldn't find {place} as a hiking area; try a park or town name"
+LARGE_REGION = "{place} is a large region; try a specific park or town (e.g. {example})"
+LARGE_REGION_EXAMPLE = "Rocky Mountain National Park"  # when no seeded snapshot lies inside the region
 US_ONLY_ALERTS = "Official alerts: available for US locations only"
 US_ONLY_FORECAST = "NWS forecasts: available for US locations only"
 HOME_REGION = ("Michigan", "United States", "us")  # every town in PLACES
@@ -158,6 +162,11 @@ def _summarize(name, result, args, label=None):
             return "No trails to rank"
         top = result[0]
         return f"Ranked {len(result)} trails; top: {top['name']} ({top['distance_km']:.1f} km, score {top['score']:.2f})"
+    if name == "get_met_weather":
+        return f"MET Norway {result.get('period') or ''}: {result['summary']}, {result.get('precip_mm')} mm precipitation"
+    if name == "get_met_hike_window":
+        conditions = f" ({', '.join(result['conditions'])})" if result.get("conditions") else ""
+        return f"MET Norway {result['window']}: {result['summary'].removeprefix('During your hike: ')}{conditions}"
     if name == "get_weather":
         return f"NWS {result.get('period') or ''}: {result['summary']}, {result['precip_chance']}% chance of precipitation".replace("  ", " ")
     if name == "get_hazards":
@@ -197,6 +206,8 @@ def _summarize(name, result, args, label=None):
             return "Trail conditions: no low light or freezing temperatures"
         return "Trail conditions: " + ", ".join(c["title"] for c in result)
     if name == "geocode":
+        if result.get("reason") == "large_region":
+            return f"Nominatim: {result.get('query')} is a large region ({result.get('region')}); no trail search"
         if result.get("reason") == "not_hiking_area":
             return f"Nominatim: no hiking area for {result.get('query')} (only streets/buildings, or another country)"
         if not result.get("found"):
@@ -441,16 +452,18 @@ def _describe_llm_error(exc):
     return f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
-def _llm_call(ctx, fn, what):
-    """Run one Gemini call with fail-fast rules: at most LLM_CALL_TIMEOUT_S, no retries, and after any
-    failure (429/503/504, timeout, other error) no further Gemini calls in this request."""
+def _llm_call(ctx, fn, what, timeout=None):
+    """Run one Gemini call with fail-fast rules: at most `timeout` s (LLM_CALL_TIMEOUT_S), no retries, and after
+    any failure (429/503/504, timeout, other error) no further Gemini calls in this request."""
+    if timeout is None:
+        timeout = LLM_CALL_TIMEOUT_S
     if ctx.llm_down:
         raise LLMUnavailable(f"{what} skipped: Gemini already failed in this request ({ctx.llm_down})")
     future = _LLM_POOL.submit(fn)
     try:
-        return future.result(timeout=LLM_CALL_TIMEOUT_S)
+        return future.result(timeout=timeout)
     except FuturesTimeout:
-        reason = f"no answer within {LLM_CALL_TIMEOUT_S} s"
+        reason = f"no answer within {timeout:g} s"
     except Exception as exc:  # noqa: BLE001 - google.genai ClientError/ServerError, network errors
         reason = _describe_llm_error(exc)
     ctx.llm_down = reason
@@ -563,6 +576,45 @@ class Planner:
         raise LLMUnavailable(f"planner did not answer within {PLANNER_MAX_TURNS} turns")
 
 
+def llm_briefing(ctx, data):
+    """One Gemini call (BRIEFING_TIMEOUT_S) for the 2-sentence trail briefing; returns the raw text."""
+    client, model, types = _gemini()
+    reply = _llm_call(ctx, lambda: client.models.generate_content(
+        model=model, contents=json.dumps(data, default=str),
+        config=types.GenerateContentConfig(system_instruction=trail_briefing.BRIEFING_PROMPT,
+                                           thinking_config=_thinking(types, model))),
+        "briefing", timeout=trail_briefing.BRIEFING_TIMEOUT_S)
+    return reply.text
+
+
+def make_briefing(ctx, plan, warnings):
+    """{"text", "source"}: Gemini's briefing if every number checks out, else the template. Never touches approval.
+    Skipped (template) without Gemini, after a Gemini failure, for a chosen trail (no Gemini calls), or past
+    LLM_START_DEADLINE_S."""
+    data = trail_briefing.briefing_data(plan, warnings)
+    reason = None
+    if ctx.user_osm_id is not None:
+        reason = "the user chose a trail (no Gemini calls)"
+    elif ctx.llm_down:
+        reason = f"Gemini failed earlier in this request ({ctx.llm_down})"
+    elif ctx.elapsed() > LLM_START_DEADLINE_S:
+        reason = f"more than {LLM_START_DEADLINE_S} s had passed"
+    else:
+        try:
+            text = llm_briefing(ctx, data)
+            ok, why = trail_briefing.validate(text, data)
+            if ok:
+                ctx.trace.add("briefing", "decide", "Gemini wrote the trail briefing; every number is in the plan")
+                return {"text": trail_briefing.with_warnings(" ".join(text.split()), plan, warnings), "source": "gemini"}
+            reason = f"Gemini's briefing was rejected ({why})"
+        except LLMUnavailable as exc:
+            reason = f"Gemini unavailable ({exc})"
+        except Exception:
+            reason = "Gemini returned an unusable briefing"
+    ctx.trace.add("briefing", "fallback", f"Template trail briefing: {reason}")
+    return {"text": trail_briefing.template(plan, warnings), "source": "template"}
+
+
 def llm_check(ctx, summary):
     client, model, types = _gemini()
     schema = {"type": "object", "properties": {"approved": {"type": "boolean"},
@@ -603,6 +655,7 @@ class PlanContext:
         self.target_km = None  # the requested distance, for out-and-back turnarounds
         self.area_trails = []  # trails from the last get_trails for the area (terrain range for the checker)
         self.place_out = None  # /plan "place": {name, lat, lon} where the plan is (the map centers here without a trail)
+        self.briefing = None   # /plan "briefing": {text, source}; null without a trail
 
     def elapsed(self):
         return perf_counter() - self.started
@@ -624,6 +677,10 @@ class PlanContext:
         found = self.tools.call("geocode", geocode, name, self.text)
         if _failed(found):
             return {"error": LOOKUP_DOWN.format(place=name), "name": name}
+        if not found.get("found") and found.get("reason") == "large_region":  # never search trails in a region
+            seeds = seeds_in_region(found["lat"], found["lon"], found.get("bbox"))
+            example = " or ".join(seeds[:2]) if seeds else LARGE_REGION_EXAMPLE
+            return {"error": LARGE_REGION.format(place=name, example=example), "name": name}
         if not found.get("found"):
             message = NOT_HIKING_AREA if found.get("reason") == "not_hiking_area" else NOT_FOUND
             return {"error": message.format(place=name), "name": name}
@@ -639,8 +696,8 @@ class PlanContext:
         return bool(code) and code not in US_CODES
 
     def weather(self, lat, lon, day):
-        if self.outside_us():
-            return _Later(lambda: unavailable("NWS", US_ONLY_FORECAST))
+        if self.outside_us():  # no NWS coverage: MET Norway Locationforecast
+            return self.tools.submit("get_met_weather", get_met_weather, round(lat, 4), round(lon, 4), day)
         return self.tools.submit("get_weather", get_weather, round(lat, 4), round(lon, 4), day)
 
     def here(self):
@@ -698,8 +755,9 @@ class PlanContext:
         """NWS hourly summary for start .. start + est_duration_min (unavailable without timing)."""
         if _failed(timing):
             return _Later(lambda: unavailable("NWS hourly", "No hike timing to look up"))
-        if self.outside_us():
-            return _Later(lambda: unavailable("NWS hourly", US_ONLY_FORECAST))
+        if self.outside_us():  # no NWS coverage: MET Norway Locationforecast
+            return self.tools.submit("get_met_hike_window", get_met_hike_window, round(area[0], 4), round(area[1], 4),
+                                     day, timing["start"], timing["est_duration_min"])
         return self.tools.submit("get_hike_window", get_hike_window, round(area[0], 4), round(area[1], 4), day,
                                  timing["start"], timing["est_duration_min"])
 
@@ -1007,6 +1065,7 @@ def _plan(ctx):
         warnings.append(f"The {plan['constraints']['start']} start time has already passed today.")
     alternatives = [{"name": t["name"], "osm_id": t["osm_id"], "distance_km": t["distance_km"], "score": t["score"]}
                     for t in ranked if t["osm_id"] != plan["trail"]["osm_id"]][:2]
+    ctx.briefing = make_briefing(ctx, plan, warnings)  # after the checker; approval is already decided
     return _response(ctx, plan["constraints"], parsed_by, plan["trail"], alternatives, explanation, plan["timing"],
                      plan["weather"], plan["climate"], space.result(), plan["hazards"],
                      {"approved": approved, "rounds": len(attempts)}, warnings,
@@ -1151,12 +1210,12 @@ def _hard_checks(plan):
             if a["severity"] in REJECT_SEVERITIES:
                 problems.append(f"NWS {a['event']} ({a['severity']}) is in effect: {a['headline']}")
     if window is not None and not _failed(window):
-        if window["max_precip_chance"] >= PRECIP_LIMIT:
+        if (window.get("max_precip_chance") or 0) >= PRECIP_LIMIT:
             problems.append(f"NWS hourly forecasts up to a {window['max_precip_chance']}% chance of precipitation "
                             f"during the hike ({window['window']}).")
         thunder = [c for c in window.get("conditions") or [] if "thunder" in c.lower()]
         if thunder:
-            problems.append(f"NWS hourly forecasts thunder during the hike ({window['window']}): {', '.join(thunder)}.")
+            problems.append(f"{window.get('source') or 'NWS hourly'} forecasts thunder during the hike ({window['window']}): {', '.join(thunder)}.")
     elif not _failed(weather) and (weather.get("precip_chance") or 0) >= PRECIP_LIMIT:
         # No hourly forecast for the hike window: fall back to the daily forecast.
         problems.append(f"NWS forecasts a {weather['precip_chance']}% chance of precipitation ({weather['summary']}).")
@@ -1248,8 +1307,12 @@ def _approval_line(plan):
                 else f"no NASA EONET events within {HAZARD_NEAR_KM} km")
     window, alerts = plan.get("hike_window"), plan.get("alerts")
     if window is not None and not _failed(window):
-        bits.append(f"{window['max_precip_chance']}% chance of precipitation during the hike")
-    elif not _failed(w):
+        bits.append(f"{window['max_precip_chance']}% chance of precipitation during the hike"
+                    if window.get("max_precip_chance") is not None
+                    else (f"{window['max_precip_mm']:g} mm of precipitation during the hike ({window.get('source')})"
+                          if window.get("max_precip_mm") is not None else
+                          "precipitation amount unknown for this exact hike window"))
+    elif not _failed(w) and w.get("precip_chance") is not None:
         bits.append(f"{w['precip_chance']}% chance of precipitation")
     if alerts is not None and not _failed(alerts):
         bits.append("no Severe or Extreme NWS alerts")
@@ -1365,6 +1428,9 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
               hazards, checker, warnings, extra=None):
     """extra: the alerts, hike_window, seasonal, conditions and climate_anomaly results (None without a place)."""
     extra = extra or {}
+    if ctx.briefing is None:
+        ctx.briefing = {"text": trail_briefing.template({"trail": trail, "checker": checker}, warnings),
+                        "source": "template"}
     error = warnings[0] if warnings else None
     if hazards is None:
         hazards_out, hazards_at = _section(None, (), "NASA EONET", error), None
@@ -1401,6 +1467,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "warnings": warnings,
         "flood_or_burn_layer": None,
         "place": ctx.place_out,  # {name, lat, lon}: where the plan is (the map centers here without a trail); null if not found
+        "briefing": ctx.briefing,  # {text, source: gemini | template}: the AI trail briefing; null without a trail
     }
     result["narration"] = generate_narration(result)
     return result

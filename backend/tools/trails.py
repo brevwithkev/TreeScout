@@ -140,13 +140,13 @@ def _save_json(path, payload):
                 logger.warning("Could not remove temporary cache file %s: %s", temporary, exc)
 
 
-def _query_endpoint(endpoint, query, parse=_parse_trails):
+def _query_endpoint(endpoint, query, parse=_parse_trails, timeout=None):
     request = Request(
         endpoint, data=urlencode({"data": query}).encode("utf-8"), method="POST",
         headers={"User-Agent": USER_AGENT, "Accept": "application/json",
                  "Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+    with urlopen(request, timeout=timeout or TIMEOUT_SECONDS) as response:
         if response.status != 200:
             raise ValueError(f"HTTP {response.status}")
         payload = json.load(response)
@@ -255,6 +255,14 @@ def get_trails(lat, lon, radius_km=10):
                 logger.warning("All Overpass endpoints failed; using cached response from %s", path)
                 break
             else:
+                seed, distance = (None, None) if is_ypsilanti_test else _seed_for(lat, lon)
+                if seed is not None:  # e.g. Ann Arbor, Detroit: precached with `python -m backend.tools.trails precache`
+                    trails = _parse_anywhere(seed["payload"])
+                    for trail in trails:
+                        trail["cached"] = True
+                    logger.warning("All Overpass endpoints failed; using the seeded snapshot of %s (%.1f km away)",
+                                   seed.get("name"), distance)
+            if trails is None:
                 raise OverpassError(
                     f"Overpass returned no trail data within {OVERPASS_BUDGET_SECONDS} s, "
                     "and no usable cached response or matching fixture is available. "
@@ -270,9 +278,9 @@ def _parse_anywhere(payload):
     return _parse_trails(payload, unnamed_mountain_paths=True)
 
 
-def _anywhere_query(bounds):
+def _anywhere_query(bounds, server_timeout=25):
     """Hiking routes, named paths/footways, named tracks, and paths with a sac_scale (mountain trails)."""
-    return ('[out:json][timeout:25];('
+    return (f'[out:json][timeout:{server_timeout}];('
             f'relation["route"="hiking"]({bounds});'
             f'way["name"]["highway"~"^(path|footway)$"]({bounds});'
             f'way["highway"="track"]["name"]({bounds});'
@@ -284,19 +292,59 @@ def _snapshot_path(lat, lon):
     return SNAPSHOT_DIR / f"{lat:.3f}_{lon:.3f}.json"
 
 
+REGION_POINT_KM = 600  # a region Nominatim returns as a point (e.g. "Rocky Mountains"): seeds within this distance
+
+
+def seeds_in_region(lat, lon, bbox=None):
+    """Names of the seeded snapshots inside a large region: inside its bounding box, or (no real box) within
+    REGION_POINT_KM of its point. Nearest first."""
+    out = []
+    real_box = bbox is not None and haversine([bbox[0], bbox[2]], [bbox[1], bbox[3]]) >= 50
+    for _path, name, s_lat, s_lon in _seed_index():
+        inside = (bbox[0] <= s_lat <= bbox[1] and bbox[2] <= s_lon <= bbox[3]) if real_box else (
+            haversine([lat, lon], [s_lat, s_lon]) <= REGION_POINT_KM)
+        if inside:
+            out.append((haversine([lat, lon], [s_lat, s_lon]), name))
+    return [name for _, name in sorted(out)]
+
+
+_seed_index_cache = {"key": None, "items": []}
+_seed_lock = Lock()
+
+
+def _seed_index():
+    """[(path, name, lat, lon)] for the seeded snapshots; re-read only when the files change (they are MBs)."""
+    paths = sorted(SEED_DIR.glob("*.json"))
+    try:
+        key = (str(SEED_DIR), tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in paths))
+    except OSError:
+        key = None
+    with _seed_lock:
+        if key is not None and key == _seed_index_cache["key"]:
+            return _seed_index_cache["items"]
+        items = []
+        for path in paths:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                items.append((path, data["name"], float(data["lat"]), float(data["lon"])))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                logger.warning("Unreadable seeded snapshot %s: %s", path.name, exc)
+        _seed_index_cache.update(key=key, items=items)
+        return items
+
+
 def _seed_for(lat, lon):
     """The nearest committed snapshot within SEED_MATCH_KM: (data, distance_km), or (None, None)."""
-    best = (None, None)
-    for path in sorted(SEED_DIR.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            distance = haversine([lat, lon], [data["lat"], data["lon"]])
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            logger.warning("Unreadable seeded snapshot %s: %s", path.name, exc)
-            continue
-        if distance <= SEED_MATCH_KM and (best[1] is None or distance < best[1]):
-            best = (data, distance)
-    return best
+    near = [(haversine([lat, lon], [s_lat, s_lon]), path) for path, _n, s_lat, s_lon in _seed_index()]
+    near = [(d, path) for d, path in near if d <= SEED_MATCH_KM]
+    if not near:
+        return None, None
+    distance, path = min(near)
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), distance
+    except (OSError, ValueError) as exc:
+        logger.warning("Unreadable seeded snapshot %s: %s", path.name, exc)
+        return None, None
 
 
 def get_trails_anywhere(lat, lon):
@@ -360,3 +408,103 @@ def get_trails_anywhere(lat, lon):
             del _cache[next(iter(_cache))]
         _cache[memo] = (monotonic(), (trails, radius, snapshot))
         return deepcopy(trails), radius, deepcopy(snapshot)
+
+
+# ---------------------------------------------------------------------------------------------
+# Pre-cache seeded snapshots (a command, never part of /plan):
+#     python -m backend.tools.trails precache "Zion National Park, Utah, USA" "Banff, Alberta, Canada" ...
+# Each place is geocoded (Nominatim), then ONE Overpass query runs at a time (mirrors tried in turn, PRECACHE_TIMEOUT_S
+# each; /plan keeps its 8 s budget), and the trails are saved to backend/data/trail_snapshots/<slug>.json.
+# ---------------------------------------------------------------------------------------------
+
+PRECACHE_TIMEOUT_S = 60
+PRECACHE_PAUSE_S = 5
+
+
+def _round_geometry(points):
+    return [{"lat": round(p["lat"], 5), "lon": round(p["lon"], 5)} for p in points or [] if p]
+
+
+def _trim_payload(payload):
+    """Only the elements that become trails (>= 1 km), with only the fields the parser reads, coords rounded."""
+    out = []
+    for element in payload.get("elements") or []:
+        if not _parse_anywhere({"elements": [element]}):
+            continue
+        slim = {"type": element["type"], "id": element["id"], "tags": element.get("tags", {})}
+        if element["type"] == "way":
+            slim["geometry"] = _round_geometry(element.get("geometry"))
+        else:
+            slim["members"] = [{"type": "way", "geometry": _round_geometry(m.get("geometry"))}
+                               for m in element.get("members", []) if m.get("type") == "way"]
+        out.append(slim)
+    return {"elements": out}
+
+
+def _slug(name):
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", name.split(",")[0].lower()).strip("_") or "place"
+
+
+def precache_place(name, timeout=PRECACHE_TIMEOUT_S):
+    """Geocode name, query Overpass one request at a time (10 km, 20 km if under MIN_TRAILS), save a seed.
+    Returns {name, file, lat, lon, radius_km, trails, kb} or {name, error}."""
+    from backend.tools.geocode import geocode
+    found = geocode(name, name)
+    if found.get("available") is False or not found.get("found"):
+        return {"name": name, "error": f"geocode: {found.get('error') or found.get('reason')}"}
+    lat, lon = round(found["lat"], 4), round(found["lon"], 4)
+    best, failures = None, []
+    for radius in ANYWHERE_RADII_KM:
+        query = _anywhere_query(",".join(map(str, _bbox(lat, lon, radius))), server_timeout=timeout)
+        answer = None
+        for endpoint in OVERPASS_ENDPOINTS:  # one query at a time, never hedged
+            try:
+                answer = _query_endpoint(endpoint, query, _parse_anywhere, timeout=timeout)
+                break
+            except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError) as exc:
+                failures.append(f"{endpoint}: {type(exc).__name__}: {exc}")
+        if answer is None:
+            break
+        best = (answer[0], answer[1], radius)
+        if len(answer[1]) >= MIN_TRAILS:
+            break
+    if best is None:
+        return {"name": name, "error": "; ".join(failures) or "no answer"}
+    payload, found_trails, radius = best
+    saved_at = datetime.now(timezone.utc).date().isoformat()
+    data = {"name": name, "lat": lat, "lon": lon, "radius_km": radius, "saved_at": saved_at,
+            "note": f"Seeded snapshot: the live Overpass answer of {saved_at} (OpenStreetMap contributors, ODbL) for "
+                    f"{found.get('display_name')}, {radius} km; only elements that are trails >= 1 km, coordinates "
+                    f"rounded to 5 decimals. Written by `python -m backend.tools.trails precache`.",
+            "payload": _trim_payload(payload)}
+    path = SEED_DIR / f"{_slug(name)}.json"
+    SEED_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, separators=(",", ":")) + "\n", encoding="utf-8")
+    return {"name": name, "file": path.name, "lat": lat, "lon": lon, "radius_km": radius,
+            "trails": len(found_trails), "kb": path.stat().st_size // 1024, "where": found.get("display_name")}
+
+
+if __name__ == "__main__":
+    import sys
+    import time as _time
+    if len(sys.argv) < 3 or sys.argv[1] != "precache":
+        print('usage: python -m backend.tools.trails precache "<place>" ["<place>" ...]')
+        sys.exit(2)
+    logging.basicConfig(level=logging.WARNING)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
+    failed = 0
+    for i, place in enumerate(sys.argv[2:]):
+        if i:
+            _time.sleep(PRECACHE_PAUSE_S)
+        result = precache_place(place)
+        if "error" in result:
+            failed += 1
+            print(f"FAILED  {place}: {result['error']}", flush=True)
+        else:
+            print(f"{result['trails']:>4} trails  {result['radius_km']:>2} km  {result['kb']:>5} KB  {result['file']:<32} "
+                  f"{result['where']}", flush=True)
+    sys.exit(1 if failed else 0)

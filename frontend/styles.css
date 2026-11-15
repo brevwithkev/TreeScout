@@ -175,6 +175,8 @@ body.app { padding: 0; height: 100vh; overflow: hidden; }
 .field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; border: 0; }
 .field-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
 .field-row output { color: var(--ink); font-size: 0.9rem; }
+.history { margin-bottom: var(--space-3); }
+.history .field-row { flex-wrap: wrap; }
 .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-3); }
 .chips-field legend { padding: 0; margin-bottom: var(--space-2); }
 input[type="range"] { padding: 0; height: 24px; border: 0; background: transparent; accent-color: var(--accent); }
@@ -203,6 +205,9 @@ input[type="date"], input[type="time"] { font-family: var(--font-mono); }
 .results { min-height: 2rem; }
 .info-empty { color: var(--ink-3); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.briefing { margin: 0 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--surface-2); }
+.briefing-title { margin: 0 0 var(--space-2); font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-2); }
+.briefing-text { margin: 0; line-height: 1.5; }
 .searched-near { margin: var(--space-2) 0 0; color: var(--ink-2); font-size: 0.9rem; }
 .anomaly { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .anomaly p { margin: 0; }

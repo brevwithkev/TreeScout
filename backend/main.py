@@ -15,6 +15,7 @@ load_dotenv(ROOT / ".env")
 from backend.agents import make_plan  # noqa: E402  (after load_dotenv so agents see the keys)
 from backend.narration import check_late_pace, synthesize_tts  # noqa: E402
 from backend import demo  # noqa: E402
+from backend.history import router as history_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -22,6 +23,7 @@ DEFAULT_LAT = 42.2411
 DEFAULT_LON = -83.6130
 
 app = FastAPI(title="TrekChek")
+app.include_router(history_router)
 
 
 @app.get("/health")

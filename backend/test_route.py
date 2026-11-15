@@ -15,7 +15,7 @@ from astral.sun import sunset
 from backend import agents
 from backend.narration import TURNAROUND_TEXT
 from backend.test_anywhere import DATE, GC_NOMINATIM, Offline, fixture, summaries
-from backend.tools import elevation, geocode, route, trails
+from backend.tools import common, elevation, geocode, met, route, trails
 from backend.tools.profile import climb_descent, moving_average, resample, stats
 
 SEED = json.loads((trails.SEED_DIR / "grand_canyon_village.json").read_text(encoding="utf-8"))
@@ -226,13 +226,14 @@ class PlaceTests(unittest.TestCase):
 
 
 class SeedElevationCacheTests(unittest.TestCase):
-    def test_every_seeded_trail_has_a_cached_srtm_profile(self):
+    def test_every_seeded_trail_has_cached_elevation(self):
+        # Precomputed with `python -m backend.tools.elevation precompute seeds` (SRTM); a few Ann Arbor trails were
+        # already cached from the Ypsilanti snapshot by an older provider.
         for path in trails.SEED_DIR.glob("*.json"):
             for t in trails._parse_anywhere(json.loads(path.read_text(encoding="utf-8"))["payload"]):
                 entry = elevation.cached_entry(t["coords"], t["osm_id"])
                 self.assertIsNotNone(entry, (path.name, t["name"]))
-                self.assertEqual(entry["source"], "NASA SRTM via OpenTopoData")
-                self.assertTrue(entry["profile"])
+                self.assertIsNotNone(entry.get("elevation_gain_m"), (path.name, t["name"]))
 
 
 class SmoothingTests(unittest.TestCase):
@@ -334,17 +335,193 @@ class UsOnlyTests(unittest.TestCase):
         self.assertIsNotNone(result["trail"])
         self.assertEqual(result["alerts"], {"available": False, "source": "NWS",
                                             "error": "Official alerts: available for US locations only"})
-        self.assertEqual(result["weather"]["error"], "NWS forecasts: available for US locations only")
-        self.assertEqual(result["hike_window"]["error"], "NWS forecasts: available for US locations only")
+        self.assertEqual(result["weather"]["source"], "MET Norway")                 # no NWS coverage: MET Norway
+        self.assertEqual(result["hike_window"]["source"], "MET Norway")
         self.assertEqual(result["place"]["country"], "Canada")
         tools = {e.get("tool") for e in result["agent_trace"]}
         self.assertFalse({"get_nws_alerts", "get_weather", "get_hike_window"} & tools)   # NWS was never asked
+        self.assertTrue({"get_met_weather", "get_met_hike_window"} <= tools)
 
     def test_us_places_still_ask_nws(self):
         with Offline(overpass=None, nominatim=GC_NOMINATIM):
             result = agents.make_plan("A hike at the Grand Canyon tomorrow", 42.2411, -83.6130, form={"date": DATE})
         self.assertEqual(result["alerts"]["source"], "NWS")
         self.assertNotIn("error", result["alerts"])
+
+
+class LargeRegionTests(unittest.TestCase):
+    SEEDS = {"rmnp.json": ("Rocky Mountain National Park, Colorado, USA", 40.3428, -105.6836),
+             "banff.json": ("Banff, Alberta, Canada", 51.1751, -115.5721),
+             "acadia.json": ("Acadia National Park, Maine, USA", 44.3386, -68.2733)}
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for file, (name, lat, lon) in self.SEEDS.items():
+            (Path(tmp.name) / file).write_text(json.dumps({"name": name, "lat": lat, "lon": lon, "radius_km": 10,
+                                                           "payload": {"elements": []}}), encoding="utf-8")
+        p = patch.object(trails, "SEED_DIR", Path(tmp.name))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def plan(self, text, nominatim):
+        with Offline(overpass=None, nominatim=nominatim) as off:
+            result = agents.make_plan(text, 42.2411, -83.6130, form={"date": DATE})
+        self.assertEqual(off.queries, [])                                      # no trail search in a region
+        self.assertIsNone(result["trail"])
+        return result
+
+    def test_mountain_range_suggests_seeds_inside(self):
+        result = self.plan("A hike in the Rocky Mountains tomorrow",
+                           {"Rocky Mountains": fixture("nominatim3_rocky_mountains.json")})
+        self.assertEqual(result["warnings"], ["Rocky Mountains is a large region; try a specific park or town "
+                                              "(e.g. Rocky Mountain National Park, Colorado, USA)"])
+
+    def test_state_suggests_seeds_inside_its_box(self):
+        hits = fixture("nominatim3_colorado.json")                    # the state first, then Colorado County, TX ...
+        self.assertTrue(geocode.is_large_region(hits[0]))
+        result = self.plan("A hike in Colorado tomorrow", {"Colorado": hits})
+        self.assertEqual(result["warnings"], ["Colorado is a large region; try a specific park or town "
+                                              "(e.g. Rocky Mountain National Park, Colorado, USA)"])
+
+    def test_no_seed_inside_uses_the_default_example(self):
+        result = self.plan("A hike in Antarctica tomorrow", {"Antarctica": fixture("nominatim_antarctica.json")})
+        self.assertEqual(result["warnings"], ["Antarctica is a large region; try a specific park or town "
+                                              "(e.g. Rocky Mountain National Park)"])
+
+    def test_what_counts_as_large(self):
+        self.assertTrue(geocode.is_large_region({"class": "natural", "type": "mountain_range"}))
+        self.assertTrue(geocode.is_large_region({"class": "boundary", "type": "administrative", "addresstype": "country"}))
+        self.assertTrue(geocode.is_large_region({"class": "waterway", "type": "river",
+                                                 "boundingbox": ["31.8", "40.5", "-115.2", "-105.8"]}))  # 1,250 km
+        self.assertFalse(geocode.is_large_region({"class": "leisure", "type": "nature_reserve",          # a big park
+                                                  "boundingbox": ["35.0", "38.0", "-118.0", "-115.0"]}))
+        self.assertFalse(geocode.is_large_region(fixture("nominatim3_rocky_mountain_np.json")[0]))
+        self.assertFalse(geocode.is_large_region(fixture("nominatim_grand_canyon_5.json")[0]))   # a point valley
+        self.assertFalse(geocode.is_large_region(fixture("nominatim_banff_5.json")[0]))          # a town
+
+
+MET_BANFF = fixture("met_norway_banff.json")   # real MET Norway compact answer for Banff, 2026-11-15T15:00Z
+
+
+class MetNorwayTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.calls = []
+
+        def fetch(seconds, url, params=None, headers=None):
+            self.calls.append((url, params, headers))
+            return json.loads(json.dumps(MET_BANFF))
+        for p in (patch.object(common, "CACHE_DIR", Path(tmp.name)), patch.object(met, "get_json_within", fetch)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_request_and_30_min_cache(self):
+        met.get_met_weather(51.17507, -115.57208, "2026-11-16")
+        met.get_met_hike_window(51.17507, -115.57208, "2026-11-16", "10:00", 120)
+        self.assertEqual(len(self.calls), 1)                                  # one request, then the cache
+        url, params, headers = self.calls[0]
+        self.assertEqual(url, "https://api.met.no/weatherapi/locationforecast/2.0/compact")
+        self.assertEqual(params, {"lat": "51.1751", "lon": "-115.5721"})       # at most 4 decimals
+        self.assertEqual(headers["User-Agent"], common.USER_AGENT)
+        self.assertEqual(met.CACHE_SECONDS, 1800)
+
+    def test_daily_summary(self):
+        w = met.get_met_weather(51.1751, -115.5721, "2026-11-16")
+        self.assertEqual((w["source"], w["precip_chance"]), ("MET Norway", None))   # compact: amounts only
+        self.assertRegex(w["summary"], r"^[A-Z][a-z ]+(and thunder)?, -?\d+F$")
+        self.assertIsInstance(w["precip_mm"], float)
+
+    def test_hike_window_in_local_time(self):
+        hw = met.get_met_hike_window(51.1751, -115.5721, "2026-11-16", "10:00", 120)
+        self.assertEqual((hw["source"], hw["window"], hw["max_precip_chance"]), ("MET Norway", "10:00-12:00", None))
+        # 10:00-12:00 in Banff (UTC-6) is 16:00-18:00 UTC: the hourly steps 16:00 and 17:00 UTC
+        steps = {s["time"]: s for s in MET_BANFF["properties"]["timeseries"]}
+        temps = [steps[t]["data"]["instant"]["details"]["air_temperature"]
+                 for t in ("2026-11-16T16:00:00Z", "2026-11-16T17:00:00Z")]
+        self.assertEqual((hw["min_temp_f"], hw["max_temp_f"]), (round(min(temps) * 9 / 5 + 32),
+                                                                round(max(temps) * 9 / 5 + 32)))
+        self.assertTrue(hw["summary"].startswith("During your hike: "))
+        self.assertTrue(hw["conditions"])
+
+    def test_beyond_the_forecast_is_unavailable(self):
+        self.assertIs(met.get_met_hike_window(51.1751, -115.5721, "2026-12-30", "10:00", 60)["available"], False)
+
+    def test_failure_is_unavailable(self):
+        with patch.object(met, "get_json_within", side_effect=TimeoutError("no answer within 8 s")):
+            result = met.get_met_weather(1.0, 1.0, "2026-11-16")
+        self.assertEqual((result["available"], result["source"]), (False, "MET Norway"))
+
+    def test_symbols(self):
+        self.assertEqual(met.words("partlycloudy_day"), "Partly cloudy")
+        self.assertEqual(met.words("lightssnowshowersandthunder_day".replace("ss", "s")), "Light snow showers and thunder")
+        self.assertEqual(met.words("heavyrainandthunder"), "Heavy rain and thunder")
+
+    def test_thunder_from_met_rejects_like_nws(self):
+        plan = {"timing": {"available": False}, "weather": {"available": False}, "hazards": {"items": []},
+                "trail": {"coords": [[51.0, -115.0]]},
+                "hike_window": {"source": "MET Norway", "window": "10:00-12:00", "max_precip_chance": None,
+                                "conditions": ["Rain showers and thunder"]}}
+        problems = agents._hard_checks(plan)
+        self.assertEqual(problems, ["MET Norway forecasts thunder during the hike (10:00-12:00): "
+                                    "Rain showers and thunder."])
+
+
+class PrecacheTests(unittest.TestCase):
+    """python -m backend.tools.trails precache: one Overpass query at a time (60 s), trimmed seeded snapshot."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.seed_dir = Path(tmp.name)
+        p = patch.object(trails, "SEED_DIR", self.seed_dir)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_widens_trims_and_saves(self):
+        gc10 = fixture("overpass_gc_village_10km.json")
+        sparse = {**gc10, "elements": gc10["elements"][:2] + [{"type": "way", "id": 9, "tags": {"name": "Tiny"},
+                                                              "geometry": [{"lat": 36.0, "lon": -112.0},
+                                                                           {"lat": 36.0001, "lon": -112.0}]}]}
+        calls = []
+
+        def query(endpoint, q, parse, timeout=None):
+            calls.append((endpoint, timeout, "[timeout:60]" in q))
+            if len(calls) == 1:
+                raise TimeoutError("busy")                      # first mirror fails: the next one is tried
+            return (sparse, parse(sparse)) if len(calls) == 2 else (gc10, parse(gc10))
+        found = {"source": "OpenStreetMap Nominatim", "found": True, "lat": 36.0545, "lon": -112.1406,
+                 "display_name": "Grand Canyon Village, Coconino County, Arizona, United States"}
+        with patch("backend.tools.geocode.geocode", lambda name, text="": found),                 patch.object(trails, "_query_endpoint", query):
+            result = trails.precache_place("Grand Canyon Village, Arizona, USA")
+        self.assertEqual([c[1] for c in calls], [60, 60, 60])        # one at a time, 60 s each
+        self.assertTrue(all(c[2] for c in calls))                   # and a 60 s server-side timeout
+        self.assertEqual((result["radius_km"], result["file"]), (20, "grand_canyon_village.json"))
+        data = json.loads((self.seed_dir / "grand_canyon_village.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(data) >= {"name", "lat", "lon", "radius_km", "saved_at", "note", "payload"}, True)
+        self.assertEqual(len(data["payload"]["elements"]), len(trails._parse_anywhere(gc10)))  # only real trails
+        self.assertNotIn("Tiny", json.dumps(data))
+        trails._cache.clear()
+        got, radius, snap = trails.get_trails_anywhere(36.0545, -112.1406)
+        self.assertEqual((radius, snap["kind"], len(got)), (20, "seeded", len(trails._parse_anywhere(gc10))))
+
+    def test_home_towns_fall_back_to_a_seed_when_overpass_is_down(self):
+        (self.seed_dir / "ann_arbor.json").write_text(json.dumps(
+            {"name": "Ann Arbor, Michigan, USA", "lat": 42.2808, "lon": -83.743, "radius_km": 10, "saved_at": "x",
+             "payload": {"elements": [{"type": "way", "id": 5, "tags": {"name": "Arb Loop"},
+                                       "geometry": [{"lat": 42.28, "lon": -83.74}, {"lat": 42.29, "lon": -83.74}]}]}}),
+            encoding="utf-8")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        trails._cache.clear()
+        with patch.object(trails, "DISK_CACHE_DIR", Path(tmp.name)),                 patch.object(trails, "_query_hedged", lambda q, failures, *a, **k: None):
+            found = trails.get_trails(42.2808, -83.743, 15)            # Ann Arbor: home path, Overpass down
+            self.assertEqual([(t["name"], t["cached"]) for t in found], [("Arb Loop", True)])
+            trails._cache.clear()
+            with self.assertRaises(trails.OverpassError):
+                trails.get_trails(45.0, -90.0, 15)                       # nothing seeded near: still an error
+        trails._cache.clear()
 
 
 if __name__ == "__main__":

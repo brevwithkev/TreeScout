@@ -5,3 +5,4 @@ google-genai>=1.0,<4.0
 astral>=3.2,<4.0
 tzdata>=2026.6          # zoneinfo reads only this package (backend/tools/common.py)
 timezonefinder>=6.5,<10
+pymongo>=4.11,<5

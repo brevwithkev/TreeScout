@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from backend import agents
 from backend.test_agents import FAKE_TOOLS
-from backend.tools import common, geocode, trails
+from backend.tools import common, geocode, met, trails
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 BASELINE = FIXTURES / "ypsilanti_baseline.json"
@@ -55,6 +55,7 @@ class Offline:
         self.patches.append(patch.object(trails, "SNAPSHOT_DIR", tmp / "trail_snapshots"))
         self.patches.append(patch.object(geocode, "get_json_within", self._nominatim))
         self.patches.append(patch.object(geocode, "MIN_INTERVAL_S", 0))
+        self.patches.append(patch.object(met, "get_json_within", self._met))
         trails._cache.clear()
         for p in self.patches:
             p.start()
@@ -67,6 +68,14 @@ class Offline:
             failures.append("test: Overpass down")
             return None
         return "test", payload, (parse or trails._parse_trails)(payload)
+
+    def _met(self, seconds, url, params=None, headers=None):
+        """MET Norway from the saved Banff answer (2026-11-15); any other point fails the test (no network)."""
+        self.met_calls = getattr(self, "met_calls", 0) + 1
+        if abs(float(params["lat"]) - 51.175) > 0.2 or abs(float(params["lon"]) + 115.57) > 0.2:
+            raise AssertionError(f"unexpected MET Norway request {params}")
+        assert "TrekChek" in headers["User-Agent"]
+        return json.loads((FIXTURES / "met_norway_banff.json").read_text(encoding="utf-8"))
 
     def _nominatim(self, seconds, url, params=None, headers=None):
         self.places.append(params["q"])
@@ -92,7 +101,11 @@ def summary(plan):
         "timing": plan.get("timing"),
         "explanation": plan.get("explanation"),
         "warnings": plan.get("warnings"),
-        "narration": [n["text"] for n in plan.get("narration") or []],
+        # Pin the original narration while the new appended briefing is tested
+        # independently. All trail choice, timing, warnings and checks stay pinned.
+        "narration": [n["text"].removesuffix(" " + plan["briefing"]["text"])
+                      if n["kind"] == "trailhead" and plan.get("briefing") else n["text"]
+                      for n in plan.get("narration") or []],
         "checker": plan.get("checker"),
     }
 
@@ -113,6 +126,10 @@ def fixture(name):
 NOMINATIM = {"Grand Canyon South Rim": fixture("nominatim_grand_canyon.json"),
              "Banff, Alberta": fixture("nominatim_banff.json"),
              "Antarctica": fixture("nominatim_antarctica.json"),
+             # Hand-made: the Antarctica point as a small place (not a continent), for the "no trails" path.
+             "Antarctic Station": [{**fixture("nominatim_antarctica.json")[0], "class": "place", "type": "locality",
+                                    "addresstype": "locality", "boundingbox": None,
+                                    "display_name": "Antarctic Station, Antarctica"}],
              "Xyzzyville": []}
 CENTERS = {slug: (float(NOMINATIM[q][0]["lat"]), float(NOMINATIM[q][0]["lon"]))
            for slug, q in (("grand_canyon", "Grand Canyon South Rim"), ("banff", "Banff, Alberta"),
@@ -188,15 +205,23 @@ class AnywhereTests(unittest.TestCase):
         self.assertNotEqual(expected, local_sunset(*CENTERS["banff"], "America/Detroit").strftime("%H:%M"))
         self.assertEqual(result["seasonal"]["items"], [])
 
-    def test_antarctica_has_no_trails(self):
+    def test_antarctica_is_a_large_region(self):
         with Offline(overpass=saved_overpass(), nominatim=NOMINATIM) as off:
-            result = plan("A hike in Antarctica tomorrow")
+            result = plan("A hike in Antarctica tomorrow")                    # Nominatim: boundary=continent
+        self.assertEqual(off.queries, [])                                      # no trail search in a continent
+        self.assertIsNone(result["trail"])
+        self.assertEqual(result["warnings"], ["Antarctica is a large region; try a specific park or town "
+                                              "(e.g. Rocky Mountain National Park)"])
+
+    def test_a_place_with_no_trails(self):
+        with Offline(overpass=saved_overpass(), nominatim=NOMINATIM) as off:
+            result = plan("A hike near Antarctic Station tomorrow")
             self.assertEqual(len(off.queries), 2)                              # 10 km found 0: widened to 20 km
             self.assertIn(f"({bounds('antarctica', 20)});", off.queries[1])
             self.assertIsNone(result["trail"])
-            self.assertEqual(result["warnings"], ["No mapped trails found near Antarctica"])
+            self.assertEqual(result["warnings"], ["No mapped trails found near Antarctic Station"])
             self.assertEqual(result["narration"], [])
-            plan("A hike in Antarctica tomorrow")                              # the empty answer was saved too
+            plan("A hike near Antarctic Station tomorrow")                     # the empty answer was saved too
             self.assertEqual(len(off.queries), 2)
 
     def test_widens_to_20_km_once_when_under_3_trails(self):
