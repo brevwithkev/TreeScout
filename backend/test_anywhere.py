@@ -1,8 +1,9 @@
 """Offline checks for planning anywhere (saved Nominatim/Overpass fixtures, no network, Gemini off):
 python -m unittest backend.test_anywhere
 
-The Ypsilanti plans must stay exactly as they were before "anywhere": tests/fixtures/ypsilanti_baseline.json was
-written by `python -m backend.test_anywhere baseline` on the code before the change.
+The Ypsilanti plans are pinned in tests/fixtures/ypsilanti_baseline.json, written by
+`python -m backend.test_anywhere baseline`: first on the code before "anywhere" (same location and trails), then
+regenerated on 2026-11-15 when linear trails became out-and-back routes (ranked by the distance walked).
 """
 
 import json
@@ -225,11 +226,11 @@ class AnywhereTests(unittest.TestCase):
         with Offline(overpass=None, nominatim={}) as off:   # any Nominatim query would fail the test
             result = plan("Easy 3 mile walk near Ypsilanti this Saturday morning")
         self.assertEqual(off.places, [])
-        self.assertEqual(result["trail"]["name"], "Yellow Trail (Central Loop)")
+        self.assertLess(trails.haversine(result["trail"]["coords"][0], [42.2411, -83.6130]), 15)
 
     def test_gemini_tool_calls_use_place_names_not_coordinates(self):
         with Offline(overpass=saved_overpass(), nominatim=NOMINATIM):
-            ctx = agents.PlanContext("hike", 42.2411, -83.6130, 15, {}, agents.ThreadPoolExecutor(2))
+            ctx = agents.PlanContext("hike near banff or xyzzyville", 42.2411, -83.6130, 15, {}, agents.ThreadPoolExecutor(2))
             future = ctx.dispatch("get_trails", {"place": "Banff, Alberta", "lat": 0.0, "lon": 0.0})
             found = ctx.for_llm("get_trails", future)
             self.assertGreater(found["count"], 3)
@@ -484,7 +485,8 @@ class ResolvedPlaceIsKeptTests(unittest.TestCase):
 
     def test_overpass_timeout_after_gemini_resolved_the_place(self):
         with Offline(overpass=None, nominatim={"Moab, Utah, USA": MOAB}) as off:
-            result = self.gemini_then_failure("I want to take a hike at the canyon tomorrow", "Moab, Utah, USA")
+            result = self.gemini_then_failure("I want to take a hike at the canyon near moab tomorrow",
+                                              "Moab, Utah, USA")
         self.assertEqual(result["constraints"]["parsed_by"], "rules")              # Gemini failed: rules fallback
         self.assertIn("LLM unavailable, used rule-based planner", summaries(result))
         self.assertEqual(off.places, ["Moab, Utah, USA"])
@@ -499,7 +501,8 @@ class ResolvedPlaceIsKeptTests(unittest.TestCase):
 
     def test_nothing_location_based_runs_before_gemini_names_the_place(self):
         with Offline(overpass=None, nominatim={"Moab, Utah, USA": MOAB}) as off:
-            result = self.gemini_then_failure("I want to take a hike at the canyon tomorrow", "Moab, Utah, USA")
+            result = self.gemini_then_failure("I want to take a hike at the canyon near moab tomorrow",
+                                              "Moab, Utah, USA")
         tools = [e.get("tool") for e in result["agent_trace"] if e.get("tool")]
         first_location_tool = next(i for i, t in enumerate(tools) if t not in ("get_space_weather",))
         self.assertEqual(tools[first_location_tool], "geocode")
@@ -508,7 +511,25 @@ class ResolvedPlaceIsKeptTests(unittest.TestCase):
     def test_no_place_named_still_uses_the_request_location(self):
         with Offline(overpass=None, nominatim={}):
             result = plan("A 5 km walk tomorrow")
-        self.assertEqual(result["trail"]["name"], "Yellow Trail (Central Loop)")  # the committed Ypsilanti fixture
+        ypsi = {t["osm_id"] for t in trails._parse_trails(json.loads(trails.YPSILANTI_FIXTURE.read_text("utf-8")))}
+        self.assertIn(result["trail"]["osm_id"], ypsi)                           # the committed Ypsilanti snapshot
+
+    def test_i_want_to_take_a_hike_with_gemini_inventing_a_town(self):
+        """Gemini names Ann Arbor for a request that names no place: ignored, the Ypsilanti default is used."""
+        with Offline(overpass=None, nominatim={}) as off:   # any Nominatim query fails the test
+            result = GeocodeQualityTests.gemini_plan(None, "I want to take a hike", "Ann Arbor, Michigan, USA")
+        self.assertEqual(off.places, [])
+        ypsi = {t["osm_id"] for t in trails._parse_trails(json.loads(trails.YPSILANTI_FIXTURE.read_text("utf-8")))}
+        self.assertIn(result["trail"]["osm_id"], ypsi)
+        self.assertIn("Gemini named Ann Arbor, Michigan, USA, which the request doesn't name; using the hiker's "
+                      "location", summaries(result))
+
+    def test_mentioned(self):
+        self.assertTrue(agents.mentioned("Grand Canyon Village, Arizona, USA", "a hike at the grand canyon"))
+        self.assertTrue(agents.mentioned("Great Smoky Mountains National Park", "the Smokies this weekend"))
+        self.assertTrue(agents.mentioned("Banff, Alberta, Canada", "hike near Banff"))
+        self.assertFalse(agents.mentioned("Ann Arbor, Michigan, USA", "I want to take a hike"))
+        self.assertFalse(agents.mentioned("Ypsilanti, Michigan", "a 5 km walk tomorrow"))
 
 
 class SeededSnapshotTests(unittest.TestCase):

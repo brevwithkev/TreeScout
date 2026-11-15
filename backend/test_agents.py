@@ -204,7 +204,7 @@ class GuardAndCoverageTests(unittest.TestCase):
     def test_place_gemini_names_is_looked_up_and_not_found(self):
         not_found = {"source": "OpenStreetMap Nominatim", "query": "Atlantis", "found": False, "checked_at": "t"}
         with patch("backend.agents.geocode", lambda name: not_found):
-            result = self.plan_with("A hike somewhere lost tomorrow",
+            result = self.plan_with("A hike somewhere in lost atlantis tomorrow",  # lowercase: the rules miss it
                                     {"chosen_osm_id": None, "explanation": "?",
                                      "constraints": {"distance_km": 8, "place": "Atlantis",
                                                      "area_lat": 1.0, "area_lon": 2.0}})  # coordinates are ignored
@@ -355,10 +355,11 @@ class DistanceWarningTests(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def test_warns_when_no_trail_is_within_half_the_distance(self):
-        result = agents.make_plan("20 km walk near Ypsilanti tomorrow", 42.0, -83.0)
+        # Other trail (5.0 km, linear) is 10 km out and back; 25 km is more than 50% away.
+        result = agents.make_plan("25 km walk near Ypsilanti tomorrow", 42.0, -83.0)
         far = [w for w in result["warnings"] if w.startswith("No trail near")]
         self.assertEqual(len(far), 1, result["warnings"])
-        self.assertTrue(far[0].startswith("No trail near 20.0 km in this area; the closest is Other trail (5.0 km)"))
+        self.assertTrue(far[0].startswith("No trail near 25.0 km in this area; the closest is Other trail (10.0 km)"))
         if result["trail"]["name"] != "Other trail":
             self.assertIn(f"; this plan uses {result['trail']['name']}", far[0])
 

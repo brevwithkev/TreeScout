@@ -29,6 +29,8 @@ from backend.tools.elevation import get_elevation_gain
 from backend.tools.geocode import clean_place, geocode
 from backend.tools.hazards import get_hazards
 from backend.tools.ranking import _is_loop, rank_trails
+from backend.tools.route import make_route, route_km
+from backend.tools.elevation import cached_entry
 from backend.tools.seasonal import get_seasonal_hazards
 from backend.tools.space_weather import get_space_weather
 from backend.tools.timing import compute_timing
@@ -52,6 +54,12 @@ MAX_ROUNDS = 2
 NOT_FOUND = "Couldn't find {place}"
 LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
 NO_TRAILS = "No mapped trails found near {place}"
+ELEVATION_UNKNOWN = "Elevation unknown: the time estimate may be far too short on steep trails"
+MOUNTAINOUS_RANGE_M = 300  # nearby trails spanning more than this: elevation is required to approve a trail
+# Words too generic to show that the request names Gemini's place ("Ann Arbor" for "I want to take a hike").
+GENERIC_PLACE_WORDS = {"the", "and", "of", "park", "national", "state", "provincial", "trail", "trails", "trailhead",
+                       "mount", "mountain", "lake", "village", "town", "city", "county", "forest", "area", "usa",
+                       "united", "states", "canada", "north", "south", "east", "west", "new", "saint", "san", "los"}
 TRAILS_DOWN = "Trail data for {place} is unavailable right now; try again"
 
 LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it rejects anything under 10 s
@@ -76,6 +84,20 @@ PLACES = {  # town -> (lat, lon): a local gazetteer for the home area, so Ypsila
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 NOT_PLACES = set(WEEKDAYS) | {"january", "february", "march", "april", "may", "june", "july", "august",
                               "september", "october", "november", "december", "the", "a", "my", "least"}
+
+
+def _words(text):
+    return re.findall(r"[a-z]+", str(text or "").lower())
+
+
+def mentioned(place, text):
+    """True when the request text names the place (Gemini sometimes invents one for "I want to take a hike").
+    A word of the place's first part, other than generic ones, must appear in the text (first 4 letters, so
+    "Smokies" matches "Smoky")."""
+    words = [w for w in _words(str(place).split(",")[0]) if len(w) >= 3]
+    specific = [w for w in words if w not in GENERIC_PLACE_WORDS] or words
+    said = _words(text)
+    return any(w == s or (len(w) >= 4 and len(s) >= 4 and w[:4] == s[:4]) for w in specific for s in said)
 
 
 def local_place(name):
@@ -145,7 +167,8 @@ def _summarize(name, result, args, label=None):
         kp = f", max Kp {result['kp_max']:g}" if result.get("kp_max") is not None else ""
         return f"NASA DONKI: {result['storms']} geomagnetic storms {result['window']}{kp}; aurora chance {result['aurora_chance']}"
     if name == "get_elevation_gain":
-        return f"{label or 'Route'}: {result['elevation_gain_m']} m elevation gain"
+        descent = f", {result['elevation_loss_m']} m descent" if result.get("elevation_loss_m") is not None else ""
+        return f"{label or 'Route'}: {result['elevation_gain_m']} m elevation gain{descent} ({result.get('source')})"
     if name == "get_nws_alerts":
         items = result["items"]
         cached = f" (cached from {result['checked_at']}; live check failed)" if result.get("stale") else ""
@@ -537,6 +560,10 @@ class PlanContext:
         self.anywhere = set()  # rounded (lat, lon) of geocoded places: their trails use get_trails_anywhere
         self.area = None      # the resolved place's (lat, lon); the Gemini tools without a place look here
         self.resolved = None  # the last place name that resolved: {"lat", "lon", "name"}; never replaced by the default
+        self.route_ref = None  # where linear trails start (the nearer end): a seeded snapshot's center, else the place
+        self.target_km = None  # the requested distance, for out-and-back turnarounds
+        self.area_trails = []  # trails from the last get_trails for the area (terrain range for the checker)
+        self.place_out = None  # /plan "place": {name, lat, lon} where the plan is (the map centers here without a trail)
 
     def elapsed(self):
         return perf_counter() - self.started
@@ -576,7 +603,24 @@ class PlanContext:
         result = self.trails_future(lat, lon).result()
         if not _failed(result):
             self.trails_by_id.update({t["osm_id"]: t for t in result["items"]})
+            self.area_trails = result["items"]
+            snap = result.get("snapshot") or {}
+            self.route_ref = ((snap["lat"], snap["lon"]) if snap.get("kind") == "seeded" and "lat" in snap
+                              else (round(lat, 4), round(lon, 4)))
         return result
+
+    def route(self, trail, target_km=None):
+        """(route, elevation result) for a trail: loop as-is, linear out-and-back (backend/tools/route.py)."""
+        elevation = self.elevation(trail).result()
+        known = None if _failed(elevation) else elevation
+        target = target_km if target_km is not None else self.target_km
+        return make_route(trail, target, known, self.route_ref or self.here()), elevation
+
+    def route_timing(self, trail, day, start, target_km=None):
+        """(route, elevation, timing future): Naismith on the route's distance and its climb both ways."""
+        route, elevation = self.route(trail, target_km)
+        walked = {**trail, "coords": route["coords"], "distance_km": route["route_km"]}
+        return route, elevation, self.timing(walked, route["climb_m"], day, start)
 
     def elevation(self, trail):
         return self.tools.submit("get_elevation_gain", get_elevation_gain, trail["coords"], trail["osm_id"],
@@ -617,7 +661,12 @@ class PlanContext:
             except (TypeError, ValueError):
                 return default
         if name == "get_trails":  # a place name; never coordinates from the model
-            found = self.resolve(a.get("place"))
+            place = a.get("place")
+            if clean_place(place) and not mentioned(place, self.text):
+                self.trace.add("planner", "decide", f"Gemini searched {clean_place(place)}, which the request doesn't "
+                                                    "name; using the hiker's location")
+                place = None
+            found = self.resolve(place)
             if found is not None and "error" in found:
                 return _Later(lambda: {"error": found["error"]})
             if found is not None:
@@ -646,8 +695,7 @@ class PlanContext:
                 return {"error": f"Unknown osm_id {a.get('osm_id')}: call get_trails first and use its osm_id values"}
             if name == "get_elevation_gain":
                 return self.elevation(trail).result()
-            gain = self.elevation(trail).result().get("elevation_gain_m")
-            return self.timing(trail, gain, str(a.get("date")), str(a.get("start_time"))).result()
+            return self.route_timing(trail, str(a.get("date")), str(a.get("start_time")))[2].result()
         return _Later(by_trail)
 
     def for_llm(self, name, future):
@@ -668,6 +716,8 @@ class PlanContext:
                      "score_parts": t["score_parts"]} for t in result[:8]]
         if name == "get_hazards":
             return {**result, "items": result["items"][:5]}
+        if name == "get_elevation_gain":
+            return {k: v for k, v in result.items() if k != "profile"}
         return result
 
 
@@ -730,6 +780,7 @@ def _plan(ctx):
     else:
         rules_area = (ctx.body_lat, ctx.body_lon)  # the request names no place
     ctx.area = rules_area
+    ctx.target_km = rules_constraints["distance_km"]
 
     # Prefetch independent tools while the LLM thinks (identical LLM calls reuse these results).
     if rules_area is not None:
@@ -759,10 +810,15 @@ def _plan(ctx):
 
     llm_constraints = (llm_answer or {}).get("constraints") if isinstance((llm_answer or {}).get("constraints"), dict) else {}
     constraints = merge_constraints(ctx.form, llm_constraints, rules, today)
+    ctx.target_km = constraints["distance_km"]
     # True when the hiker asked for a distance (form, text via Gemini, or text via rules), not the default.
     distance_given = any(_valid_km(src.get("distance_km")) for src in (ctx.form, llm_constraints, rules))
     llm_place = clean_place(llm_constraints.get("place")) if parsed_by == "gemini" else None
     if llm_place and llm_place.lower() in ("null", "none"):
+        llm_place = None
+    if llm_place and not mentioned(llm_place, ctx.text):  # "I want to take a hike": Gemini must not pick a town
+        trace.add("planner", "decide", f"Gemini named {llm_place}, which the request doesn't name; "
+                                       "using the hiker's location")
         llm_place = None
     if llm_place and not (ctx.resolved and llm_place.lower() == ctx.resolved["name"].lower()):
         before = ctx.resolved
@@ -781,6 +837,8 @@ def _plan(ctx):
     else:                             # no place named at all: the request's own lat/lon
         area, place = (ctx.body_lat, ctx.body_lon), None
     ctx.area = area
+    if area is not None:
+        ctx.place_out = {"name": place, "lat": round(area[0], 4), "lon": round(area[1], 4)}
 
     if area is None:  # the place name was not found (or the lookup is down): no plan
         trace.add("planner", "reject", area_error)
@@ -914,9 +972,11 @@ def _prefetch_context(ctx, area, constraints, space):
             out["rank_trails"] = ctx.for_llm("rank_trails", _Later(lambda: ranked))
             for row, t in zip(out["rank_trails"], ranked):
                 row["loop"], row["elevation_gain_m"] = _is_loop(t["coords"]), t.get("elevation_gain_m")
+                row["route_km"] = round(route_km(t, constraints["distance_km"]), 2)
             top = ranked[0]
-            out["compute_timing_for_top"] = ctx.timing(top, top.get("elevation_gain_m"), constraints["date"],
-                                                       constraints["start"]).result()
+            route, _elevation, timing = ctx.route_timing(top, constraints["date"], constraints["start"],
+                                                         constraints["distance_km"])
+            out["compute_timing_for_top"] = {**timing.result(), "route": route["kind"], "route_km": route["route_km"]}
             ctx.hike_window(area, constraints["date"], out["compute_timing_for_top"])  # warms the NWS hourly cache
         here = (round(area[0], 4), round(area[1], 4))
         ctx.alerts(area)  # not shown to the planner; started now so _assemble usually finds them done
@@ -971,16 +1031,15 @@ def _choose(ctx, answer, ranked, rejected):
 
 def _assemble(ctx, trail, constraints, area):
     """Every number below comes from a tool result."""
-    lat, lon = trail["coords"][0]
-    gain_f = ctx.elevation(trail)
+    ctx.elevation(trail)  # started now; used by ctx.route_timing below
     weather = ctx.tools.submit("get_weather", get_weather, round(area[0], 4), round(area[1], 4), constraints["date"])
     climate = ctx.tools.submit("get_climate", get_climate, round(area[0], 4), round(area[1], 4), constraints["date"])
     hazards = ctx.tools.submit("get_hazards", get_hazards, round(area[0], 4), round(area[1], 4), HAZARD_RADIUS_KM)
     alerts, seasonal = ctx.alerts(area), ctx.seasonal(area, constraints["date"])
-    gain = gain_f.result()
-    gain_m = None if _failed(gain) else gain["elevation_gain_m"]
+    route, gain, timing_f = ctx.route_timing(trail, constraints["date"], constraints["start"],
+                                             constraints["distance_km"])
     gain_source = None if _failed(gain) else gain.get("source")
-    timing = ctx.timing(trail, gain_m, constraints["date"], constraints["start"]).result()
+    timing = timing_f.result()
     window = ctx.hike_window(area, constraints["date"], timing).result()
     anomaly = ctx.tools.call("compare_climate", compare_climate, window, climate.result())
     conditions = ctx.tools.call("derive_conditions", derive_conditions, timing, window)
@@ -988,9 +1047,14 @@ def _assemble(ctx, trail, constraints, area):
     if unusual:
         conditions = [*conditions, unusual]
     return {
-        "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": trail["distance_km"],
-                  "elevation_gain_m": gain_m, "coords": trail["coords"],
-                  "elevation_source": gain_source},  # extra field (not in mock_plan.json): card label
+        # The route walked: distance_km, elevation_gain_m (the climb, both ways on an out-and-back) and coords (out
+        # and back) are the route's. Extra fields (not in mock_plan.json): elevation_source, route, trail_km,
+        # turnaround_km, turnaround_index.
+        "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": route["route_km"],
+                  "elevation_gain_m": route["climb_m"], "coords": route["coords"],
+                  "elevation_source": gain_source, "route": route["kind"], "trail_km": route["trail_km"],
+                  "turnaround_km": route["turnaround_km"], "turnaround_index": route["turnaround_index"]},
+        "terrain_range_m": _terrain_range(ctx.area_trails),
         "score": trail.get("score", 0.0), "constraints": dict(constraints),
         "timing": timing, "weather": weather.result(), "climate": climate.result(), "hazards": hazards.result(),
         "alerts": alerts.result(), "hike_window": window, "seasonal": seasonal.result(), "conditions": conditions,
@@ -998,11 +1062,25 @@ def _assemble(ctx, trail, constraints, area):
     }
 
 
+def _terrain_range(trails):
+    """The largest elevation range (max - min, m) of any nearby trail with a cached profile; 0 if none."""
+    ranges = []
+    for t in trails or []:
+        entry = cached_entry(t.get("coords") or [], t.get("osm_id"))
+        if entry and entry.get("max_m") is not None and entry.get("min_m") is not None:
+            ranges.append(entry["max_m"] - entry["min_m"])
+    return max(ranges, default=0)
+
+
 def _hard_checks(plan):
     problems = []
     timing, weather = plan["timing"], plan["weather"]
     if not _failed(timing) and timing.get("warning"):
         problems.append(timing["warning"])
+    terrain = plan.get("terrain_range_m") or 0
+    if plan["trail"].get("elevation_gain_m") is None and terrain > MOUNTAINOUS_RANGE_M:
+        problems.append(f"Elevation is unknown for {plan['trail']['name']} in mountainous terrain (nearby trails "
+                        f"span {terrain} m), so the time estimate could be far too short.")
     for h, d in _hazards_near_route(plan["hazards"], plan["trail"]["coords"], HAZARD_NEAR_KM):
         problems.append(f"Active NASA EONET event {h['title']} ({h['type']}) is {d:.1f} km from the trail.")
     alerts, window = plan.get("alerts"), plan.get("hike_window")
@@ -1033,6 +1111,9 @@ def _advisories(plan):
     if seasonal is not None and not _failed(seasonal):
         out += [f"{i['title']}: {i['advice']}." for i in seasonal["items"]]
     out += [f"{c['title']}: {c['advice']}." for c in plan.get("conditions") or []]
+    trail = plan.get("trail")
+    if isinstance(trail, dict) and "elevation_gain_m" in trail and trail["elevation_gain_m"] is None:
+        out.append(ELEVATION_UNKNOWN)
     return out
 
 
@@ -1057,11 +1138,12 @@ def _distance_warning(target_km, distance_given, trails, chosen):
     """Warn when no trail in the area is within ±50% of the distance the hiker asked for."""
     if not distance_given or not target_km or not trails:
         return None
-    closest = min(trails, key=lambda t: abs(t["distance_km"] - target_km))
-    if abs(closest["distance_km"] - target_km) <= DISTANCE_TOLERANCE * target_km:
+    walked = {t["osm_id"]: route_km(t, target_km) for t in trails}
+    closest = min(trails, key=lambda t: abs(walked[t["osm_id"]] - target_km))
+    if abs(walked[closest["osm_id"]] - target_km) <= DISTANCE_TOLERANCE * target_km:
         return None
     text = (f"No trail near {target_km:.1f} km in this area; the closest is {closest['name']} "
-            f"({closest['distance_km']:.1f} km)")
+            f"({walked[closest['osm_id']]:.1f} km)")
     if chosen and chosen.get("osm_id") != closest["osm_id"]:
         text += f"; this plan uses {chosen['name']} ({chosen['distance_km']:.1f} km)"
     return text + "."
@@ -1154,8 +1236,13 @@ def _explanation(answer, plan, ranked, n_trails):
     if text and trail["name"].lower() in text.lower() and mentions_distance:
         return text
     rank = next((i + 1 for i, t in enumerate(ranked) if t["osm_id"] == trail["osm_id"]), None)
+    if trail.get("route") == "out-and-back":
+        shape = (f", out and back ({trail['turnaround_km']:.1f} km out, then back the same way)"
+                 if trail.get("turnaround_km") else ", out and back")
+    else:
+        shape = ", a loop" if _is_loop(trail["coords"]) else ""
     parts = [f"{trail['name']} is {km:.1f} km ({_mi(km):.1f} mi)"
-             f"{', a loop' if _is_loop(trail['coords']) else ''}"
+             f"{shape}"
              f"{f', ranked #{rank} of {n_trails} trails nearby' if rank else ''}."]
     if not _failed(timing):
         start = datetime.strptime(timing["start"], "%H:%M")

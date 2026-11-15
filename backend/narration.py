@@ -63,6 +63,7 @@ def _section(plan, key):
     return value if isinstance(value, dict) and value.get("available") is not False else {}
 
 
+TURNAROUND_TEXT = "Turnaround point: head back the way you came."  # out-and-back routes (halfway point)
 TOP_HAZARD_MAX_WORDS = 11  # the trailhead line adds fewer than 12 words about the top hazard
 CONDITION_PHRASES = {
     "Freezing temperatures": "Freezing temps: watch for icy boardwalks.",
@@ -165,10 +166,14 @@ def generate_narration(plan):
                        "text": f"You've hiked {k} kilometer{'s' if k != 1 else ''}, {remaining:g} to go."})
 
     if total_km >= 1.0:
-        half_idx = index_at(half_km)
+        turn = trail.get("turnaround_index")
+        half_idx = turn if trail.get("route") == "out-and-back" and isinstance(turn, int) else index_at(half_km)
         if 0 < half_idx < len(coords) - 1:
-            text = (f"Halfway. You're on schedule if it's before {turnaround_by}." if turnaround_by
-                    else "Halfway there.")
+            if trail.get("route") == "out-and-back":
+                text = TURNAROUND_TEXT
+            else:
+                text = (f"Halfway. You're on schedule if it's before {turnaround_by}." if turnaround_by
+                        else "Halfway there.")
             points.append({"coord_index": half_idx, "km": half_km, "kind": "halfway", "text": text})
 
     hazards = plan.get("hazards")

@@ -331,7 +331,7 @@ def get_trails_anywhere(lat, lon):
             if seed is not None:
                 trails, radius = _parse_anywhere(seed["payload"]), seed["radius_km"]
                 snapshot = {"kind": "seeded", "name": seed.get("name"), "saved_at": seed.get("saved_at"),
-                            "distance_km": round(distance, 1)}
+                            "distance_km": round(distance, 1), "lat": seed["lat"], "lon": seed["lon"]}
                 logger.info("Using seeded trail snapshot %s (%.1f km away)", seed.get("name"), distance)
         if trails is None:
             deadline, failures, best, complete = monotonic() + OVERPASS_BUDGET_SECONDS, [], None, False

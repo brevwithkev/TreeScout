@@ -343,10 +343,11 @@ function divIcon(cls, glyph, size = 24) {
   });
 }
 
-function drawTrail(coords, name) {
+function drawTrail(coords, name, trail = null) {
   if (!map) return;
   routeLayer.clearLayers();
   if (!coords) return;
+  const outAndBack = isObj(trail) && trail.route === "out-and-back";
 
   // Both lines use the exact same coordinate array, so the route begins at coords[0],
   // the same point as the S marker. smoothFactor 0 stops Leaflet from simplifying points away.
@@ -357,17 +358,22 @@ function drawTrail(coords, name) {
 
   const start = coords[0];
   const end = coords[coords.length - 1];
-  const loop = haversineKm(start, end) < 0.05;
-  if (!loop) {
+  const loop = haversineKm(start, end) < 0.05 && !outAndBack;
+  const turnIndex = outAndBack ? toNum(trail.turnaround_index) : NaN;
+  if (outAndBack && Number.isInteger(turnIndex) && coords[turnIndex]) {
+    L.marker(coords[turnIndex], { icon: divIcon("marker--end", "T"), title: `Turnaround: ${name}` })
+      .bindTooltip("Turnaround: head back the way you came").addTo(routeLayer);
+  } else if (!loop && !outAndBack) {
     L.marker(end, { icon: divIcon("marker--end", "E"), title: `Finish: ${name}` })
       .bindTooltip("Finish").addTo(routeLayer);
   }
   // Added last with a z-index boost so S is always drawn on top (on a loop, S and E share a point).
+  const startLabel = loop ? "Start & finish (loop)" : outAndBack ? "Start & finish (out-and-back)" : "Start";
   L.marker(start, {
     icon: divIcon("marker--start", "S"),
-    title: loop ? `Start and finish (loop): ${name}` : `Start: ${name}`,
+    title: `${startLabel}: ${name}`,
     zIndexOffset: 1000,
-  }).bindTooltip(loop ? "Start & finish (loop)" : "Start").addTo(routeLayer);
+  }).bindTooltip(startLabel).addTo(routeLayer);
 
   map.fitBounds(line.getBounds(), { padding: [40, 40] });
 }
@@ -450,7 +456,7 @@ function renderPlan(plan, mock) {
 
   const coords = validCoords(plan.trail);
   const trailName = (isObj(plan.trail) && str(plan.trail.name)) || "Trail";
-  drawTrail(coords, trailName);
+  drawTrail(coords, trailName, isObj(plan.trail) ? plan.trail : null);
   hikeLoad(plan, coords); // resets any running simulation and pre-fetches narration audio
 
   const hazards = renderHazards(plan, coords ? coords[0] : DEFAULT_CENTER); // {eonet, serious}
@@ -554,7 +560,9 @@ function trailCard(plan, coords) {
     el("p", { class: "trail-name" }, str(t.name) || "Unnamed trail"),
     kv([
       ["Distance", kmMi(t.distance_km)],
-      ["Elevation gain", fmtUnit(t.elevation_gain_m, 0, " m")],
+      ["Route", routeShape(t)],
+      [t.route === "out-and-back" ? "Total climb (both ways)" : "Elevation gain",
+       t.elevation_gain_m === null ? "Unknown" : fmtUnit(t.elevation_gain_m, 0, " m")],
       ["Route points", coords ? String(coords.length) : null],
     ]),
     explanation && el("p", { class: "explanation" }, explanation),
@@ -566,6 +574,17 @@ function trailCard(plan, coords) {
     date: [osm, t && t.cached === true ? "cached copy" : null,
            t && str(t.elevation_source) ? `elevation: ${str(t.elevation_source)}` : null].filter(Boolean).join(" · ") || null,
   });
+}
+
+/** "Out and back: 7.5 km out, then back the same way" | "Loop" | null (older plans). */
+function routeShape(t) {
+  if (t.route === "loop") return "Loop";
+  if (t.route !== "out-and-back") return null;
+  const out = toNum(t.turnaround_km), whole = toNum(t.trail_km);
+  const partial = Number.isFinite(out) && Number.isFinite(whole) && out < whole - 0.05;
+  return Number.isFinite(out)
+    ? `Out and back: ${out.toFixed(1)} km out${partial ? ` (of ${whole.toFixed(1)} km)` : ""}, then back the same way`
+    : "Out and back";
 }
 
 function timingCard(plan) {
@@ -1036,6 +1055,7 @@ const hike = {
   pace: 1, playback: "normal",
   direction: "out",    // out | back (after "Head back")
   turnKm: 0,           // where the hiker turned around
+  turnaroundKm: null,  // out-and-back routes: the planned turnaround (km along the route); past it, you're returning
   late: false,         // inside a late episode (TURN BACK shown)
   lastTs: null, raf: 0,
   narration: [],       // [{key, coordIndex, text, url: Promise<string|null>}]
@@ -1265,6 +1285,9 @@ function hikeLoad(plan, coords) {
   const routeKm = hike.cumKm[hike.cumKm.length - 1];
   const statedKm = toNum(isObj(plan.trail) ? plan.trail.distance_km : NaN);
   hike.totalKm = Number.isFinite(statedKm) && statedKm > 0 ? statedKm : routeKm;
+  const turnIndex = isObj(plan.trail) && plan.trail.route === "out-and-back" ? toNum(plan.trail.turnaround_index) : NaN;
+  hike.turnaroundKm = Number.isInteger(turnIndex) && hike.cumKm[turnIndex] !== undefined
+    ? hike.cumKm[turnIndex] * (hike.totalKm / (routeKm || 1)) : null;
 
   const timing = section(plan, "timing") || {};
   const constraints = isObj(plan.constraints) ? plan.constraints : {};
@@ -1361,8 +1384,25 @@ function paceWords(pace) {
 }
 
 /** Turn around: walk back along the route already hiked, to the trailhead. The clock keeps running. */
+/** Past the turnaround of an out-and-back route: already walking back to the start. */
+function returning() {
+  return hike.direction === "out" && hike.turnaroundKm !== null && hike.posKm >= hike.turnaroundKm;
+}
+
+/** km left to the trailhead if the hiker heads back now. */
+function kmToStart() {
+  return returning() ? Math.max(0, hike.totalKm - hike.posKm) : hike.posKm;
+}
+
 function headBack() {
   if (!hike.coords || hike.direction === "back" || hike.state === "idle" || hike.state === "done") return;
+  if (returning()) { // the rest of the out-and-back route already leads back to the start
+    stopLateChecks();
+    clearBanners();
+    enqueueLine({ text: HEADING_BACK_CUE, url: cue(HEADING_BACK_CUE), gen: hike.gen }, { interrupt: true });
+    renderHike();
+    return;
+  }
   hike.direction = "back";
   hike.turnKm = hike.posKm;
   stopLateChecks();
@@ -1410,7 +1450,7 @@ function hikeFrame(ts) {
 
 /** "Head back now: back at the trailhead about 16:52, 19 min before sunset." (at the current pace) */
 function headBackNowText(clock) {
-  const arrive = Math.round(clock + hike.posKm / kmPerMin()); // whole minutes, like the arrival readout
+  const arrive = Math.round(clock + kmToStart() / kmPerMin()); // whole minutes, like the arrival readout
   const vs = hike.sunsetMin === null ? ""
     : hike.sunsetMin - arrive >= 0 ? `, ${fmtLeft(hike.sunsetMin - arrive)} before sunset`
     : `, ${fmtLeft(arrive - hike.sunsetMin)} after sunset`;
@@ -1510,6 +1550,7 @@ function isLateLocally({ startMin, sunsetMin, sunsetText, totalKm, currentKm, el
 
 async function checkLate() {
   if (hike.direction !== "out" || hike.state !== "running") return;
+  if (returning()) return; // past the turnaround: already heading back, "turn back" makes no sense
   if (hike.lateInFlight) { hike.lateAgain = true; return; } // e.g. pace changed mid-request: check again after
   const gen = hike.gen;
   const currentKm = Math.round(hike.posKm * 1000) / 1000;

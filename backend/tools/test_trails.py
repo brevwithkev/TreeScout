@@ -118,8 +118,9 @@ class TrailTests(unittest.TestCase):
         result = plan(PlanRequest(request="2 km walk near Ypsilanti tomorrow", lat=42, lon=-83))
         expected = json.loads((ROOT / "mock_plan.json").read_text(encoding="utf-8"))
         self.assertEqual(list(result), list(expected))
-        # Contract trail keys plus the optional elevation_source (card label).
-        self.assertEqual(result["trail"].keys(), expected["trail"].keys() | {"elevation_source"})
+        # Contract trail keys plus the optional extras: elevation_source (card label) and the route shape.
+        self.assertEqual(result["trail"].keys(), expected["trail"].keys() | {
+            "elevation_source", "route", "trail_km", "turnaround_km", "turnaround_index"})
         self.assertEqual(result["trail"]["elevation_source"], "Open-Meteo")
         self.assertEqual(result["trail"]["name"], "Real trail")
         self.assertEqual(result["trail"]["elevation_gain_m"], 12)
