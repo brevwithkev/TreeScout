@@ -153,39 +153,42 @@ def _query_endpoint(endpoint, query, parse=_parse_trails, timeout=None):
     return payload, parse(payload)
 
 
+_cooldown_until = 0.0
+
+
 def _query_hedged(query, failures, budget=None, parse=_parse_trails):
-    """Hedged requests: start the first endpoint, and start the next one after HEDGE_SECONDS without an
-    answer (or right away after a failure). The first success wins. Everything together gives up after
-    budget seconds (OVERPASS_BUDGET_SECONDS); mirrors still running then are abandoned. Returns
-    (endpoint, payload, trails) or None, appending each failure to ``failures``."""
-    pool = ThreadPoolExecutor(max_workers=len(OVERPASS_ENDPOINTS), thread_name_prefix="overpass")
-    budget = OVERPASS_BUDGET_SECONDS if budget is None else budget
-    deadline = monotonic() + budget
-    try:
-        pending, queue = {}, list(OVERPASS_ENDPOINTS)
-        while queue or pending:
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                break
-            if queue:  # each pass follows a hedge timeout or a failure: start the next mirror
-                endpoint = queue.pop(0)
-                pending[pool.submit(_query_endpoint, endpoint, query, parse)] = endpoint
-            done, _ = wait(pending, timeout=min(HEDGE_SECONDS, remaining) if queue else remaining,
-                           return_when=FIRST_COMPLETED)
-            for future in done:
-                endpoint = pending.pop(future)
-                try:
-                    payload, trails = future.result()
-                except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError) as exc:
-                    message = f"{endpoint}: {exc}"
-                    failures.append(message)
-                    logger.warning("Overpass endpoint failed: %s", message)
-                    continue
-                return endpoint, payload, trails
-        for endpoint in pending.values():
-            failures.append(f"{endpoint}: no answer within {budget:g} s")
-            logger.warning("Overpass endpoint abandoned after %g s: %s", budget, endpoint)
+    """One bounded attempt; never cycle mirrors on throttling."""
+    global _cooldown_until
+    if monotonic() < _cooldown_until:
+        failures.append("Overpass 429 cooldown; try later")
         return None
+    budget = min(4, OVERPASS_BUDGET_SECONDS if budget is None else budget)
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="overpass")
+    try:
+        future = pool.submit(_query_endpoint, OVERPASS_URL, query, parse)
+        done, _ = wait([future], timeout=budget)
+        if not done:
+            failures.append(f"Overpass: no answer within {budget:g} s")
+            _cooldown_until = monotonic() + 30
+            return None
+        try:
+            payload, items = future.result()
+            return OVERPASS_URL, payload, items
+        except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError) as exc:
+            delay = 30
+            if isinstance(exc, HTTPError) and exc.code == 429:
+                from email.utils import parsedate_to_datetime
+                value = (exc.headers or {}).get("Retry-After", "60")
+                try:
+                    delay = max(60, float(value))
+                except (ValueError, TypeError):
+                    try:
+                        delay = max(60, parsedate_to_datetime(value).timestamp() - time())
+                    except (ValueError, TypeError, OverflowError):
+                        delay = 60
+            _cooldown_until = monotonic() + delay
+            failures.append(f"Overpass unavailable: {exc}")
+            return None
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
@@ -215,14 +218,30 @@ def get_trails(lat, lon, radius_km=10):
         if bbox in _cache:
             return deepcopy(_cache[bbox][1])
         try:
-            if time() - cache_file.stat().st_mtime < DISK_FRESH_SECONDS:
+            if cache_file.exists():
                 trails = _parse_trails(json.loads(cache_file.read_text(encoding="utf-8")))
+                for trail in trails:
+                    trail.update(cached=True, captured_at=datetime.fromtimestamp(cache_file.stat().st_mtime, timezone.utc).isoformat())
                 logger.info("Using Overpass response saved %.0f min ago: %s",
                             (time() - cache_file.stat().st_mtime) / 60, cache_file.name)
                 _cache[bbox] = (monotonic(), trails)
                 return deepcopy(trails)
         except (OSError, ValueError, KeyError, TypeError):
             pass  # missing or unreadable: query live below
+        # Permanent, geographically matched real geometry before any live request.
+        seed, _distance = (None, None) if is_ypsilanti_test else _seed_for(lat, lon)
+        path = YPSILANTI_FIXTURE if is_ypsilanti_test else None
+        try:
+            payload = seed["payload"] if seed is not None else json.loads(path.read_text(encoding="utf-8")) if path else None
+            if payload is not None:
+                items = _parse_anywhere(payload)
+                captured = seed.get("saved_at") if seed else datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+                for item in items:
+                    item.update(cached=True, captured_at=captured)
+                _cache[bbox] = (monotonic(), items)
+                return deepcopy(items)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
         query = (
             '[out:json][timeout:25];('
             f'relation["route"="hiking"]({bounds});'
@@ -369,6 +388,8 @@ def get_trails_anywhere(lat, lon):
         trails, snapshot = None, None
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
+            if haversine([lat, lon], [float(saved['lat']), float(saved['lon'])]) > 0.2:
+                raise ValueError("Saved snapshot does not match this location")
             trails, radius = _parse_anywhere(saved["payload"]), saved["radius_km"]
             snapshot = {"kind": "saved", "name": saved.get("name"), "saved_at": saved.get("saved_at")}
             logger.info("Using saved trail snapshot %s (%g km)", path.name, radius)

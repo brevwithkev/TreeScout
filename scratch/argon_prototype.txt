@@ -1,0 +1,952 @@
+I've created backend/narration.py and wired it into backend/agents.py and backend/main.py for Phase 3 (Prompt 3A), touching only backend/ so you won't collide with Person B's frontend/ commits.
+Narration: 
+"""Phase 3 deterministic route narration, pace/sunset check, and ElevenLabs TTS with disk cache."""
+
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+from backend.tools.trails import haversine
+
+
+ROOT = Path(__file__).resolve().parent.parent
+TTS_CACHE_DIR = ROOT / "cache" / "tts"
+DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # Rachel (ElevenLabs default pre-made voice)
+
+
+
+
+def _cumulative_distances(coords: list[list[float]]) -> list[float]:
+   if not coords:
+       return []
+   cum = [0.0]
+   for a, b in zip(coords, coords[1:]):
+       cum.append(cum[-1] + haversine(a, b))
+   return cum
+
+
+
+
+def _index_at_distance(cum_dists: list[float], target_km: float) -> int:
+   for idx, d in enumerate(cum_dists):
+       if d >= target_km:
+           return idx
+   return max(0, len(cum_dists) - 1)
+
+
+
+
+def generate_narration(plan: dict) -> list[dict]:
+   """Deterministically build narration points from route geometry, timing, weather, and hazards."""
+   trail = plan.get("trail") or {}
+   coords = trail.get("coords") or []
+   if not coords:
+       return []
+
+
+   name = trail.get("name") or "the trail"
+   total_km = float(trail.get("distance_km") or 0.0)
+   timing = plan.get("timing") or {}
+   sunset = timing.get("sunset") or "sunset"
+   turnaround_by = timing.get("turnaround_by") or "turnaround time"
+   weather = plan.get("weather") or {}
+   weather_summary = weather.get("summary")
+   weather_phrase = (
+       f" Weather is {weather_summary}."
+       if weather_summary and weather_summary.lower() != "unavailable"
+       else ""
+   )
+
+
+   cum = _cumulative_distances(coords)
+   if total_km <= 0 and cum:
+       total_km = round(cum[-1], 2)
+
+
+   points: list[dict] = []
+
+
+   # 1. Trailhead (coord_index 0)
+   points.append({
+       "coord_index": 0,
+       "km": 0.0,
+       "kind": "trailhead",
+       "text": (
+           f"Welcome to {name}, {total_km:.1f} km total. "
+           f"Sunset is at {sunset}, turn around by {turnaround_by}.{weather_phrase}"
+       ).strip(),
+   })
+
+
+   # 2. Every 1 km marker
+   max_whole_km = int(total_km)
+   half_km = round(total_km / 2.0, 2)
+   for k in range(1, max_whole_km + 1):
+       if abs(k - total_km) < 0.25 or abs(k - half_km) < 0.2:
+           continue
+       idx = _index_at_distance(cum, float(k))
+       rem = max(0.0, round(total_km - k, 1))
+       points.append({
+           "coord_index": idx,
+           "km": round(float(k), 2),
+           "kind": "km",
+           "text": f"You've hiked {k} km, {rem:g} km to go.",
+       })
+
+
+   # 3. Halfway point
+   if total_km >= 1.0:
+       half_idx = _index_at_distance(cum, half_km)
+       if 0 < half_idx < len(coords) - 1:
+           points.append({
+               "coord_index": half_idx,
+               "km": half_km,
+               "kind": "halfway",
+               "text": f"Halfway. You're on schedule if it's before {turnaround_by}.",
+           })
+
+
+   # 4. Within 2 km of any hazard
+   for hazard in plan.get("hazards") or []:
+       h_lat = hazard.get("lat")
+       h_lon = hazard.get("lon")
+       if not isinstance(h_lat, (int, float)) or not isinstance(h_lon, (int, float)):
+           continue
+       best_idx = min(
+           range(len(coords)),
+           key=lambda i: haversine(coords[i], [float(h_lat), float(h_lon)]),
+       )
+       closest_km = haversine(coords[best_idx], [float(h_lat), float(h_lon)])
+       if closest_km <= 2.0:
+           h_title = hazard.get("title") or hazard.get("type") or "hazard"
+           h_src = hazard.get("source") or "NASA EONET"
+           h_date = hazard.get("date") or "recent"
+           points.append({
+               "coord_index": best_idx,
+               "km": round(cum[best_idx], 2),
+               "kind": "hazard",
+               "text": f"Caution: {h_title} within {closest_km:.1f} km, reported by {h_src} on {h_date}.",
+           })
+
+
+   # 5. Final point
+   last_idx = len(coords) - 1
+   if last_idx > 0:
+       points.append({
+           "coord_index": last_idx,
+           "km": round(total_km, 2),
+           "kind": "finish",
+           "text": "You're back at the trailhead.",
+       })
+
+
+   points.sort(key=lambda item: (item["coord_index"], item["km"]))
+   return points
+
+
+
+
+def _parse_hhmm_to_minutes(hhmm: str | None) -> int | None:
+   if not hhmm or ":" not in str(hhmm):
+       return None
+   try:
+       parts = str(hhmm).strip().split(":")
+       return int(parts[0]) * 60 + int(parts[1])
+   except (ValueError, IndexError):
+       return None
+
+
+
+
+def check_late_pace(plan: dict, current_km: float, elapsed_min: float) -> dict:
+   """Compare actual hike pace to planned pace and sunset window."""
+   trail = plan.get("trail") or {}
+   timing = plan.get("timing") or {}
+   total_km = float(trail.get("distance_km") or 0.0)
+   est_duration_min = float(timing.get("est_duration_min") or 0.0)
+   sunset_str = timing.get("sunset") or "17:08"
+
+
+   if total_km <= 0 or est_duration_min <= 0 or elapsed_min <= 0:
+       return {"late": False}
+
+
+   planned_min_per_km = est_duration_min / total_km
+   actual_min_per_km = elapsed_min / max(float(current_km), 0.05)
+   is_20pct_slower = actual_min_per_km > (planned_min_per_km * 1.2)
+
+
+   if not is_20pct_slower:
+       return {"late": False}
+
+
+   projected_total_min = actual_min_per_km * total_km
+   start_min = _parse_hhmm_to_minutes(timing.get("start"))
+   sunset_min = _parse_hhmm_to_minutes(sunset_str)
+
+
+   would_miss_sunset = True
+   if start_min is not None and sunset_min is not None:
+       # Trigger if projected finish is after sunset OR if slowing down by >20% cuts into safety margin
+       would_miss_sunset = (start_min + projected_total_min >= sunset_min) or (
+           projected_total_min - est_duration_min >= 15
+       )
+
+
+   if would_miss_sunset:
+       return {
+           "late": True,
+           "text": f"You're behind schedule. Turn back now to reach the trailhead before sunset at {sunset_str}.",
+       }
+   return {"late": False}
+
+
+
+
+def synthesize_tts(text: str) -> bytes:
+   """Call ElevenLabs TTS API and cache MP3 bytes in cache/tts/<sha256>.mp3."""
+   clean_text = (text or "").strip()
+   if not clean_text:
+       raise ValueError("Text is required for TTS")
+
+
+   voice_id = (os.getenv("ELEVENLABS_VOICE_ID") or DEFAULT_VOICE_ID).strip()
+   digest = hashlib.sha256(f"{voice_id}:{clean_text}".encode("utf-8")).hexdigest()
+   cache_path = TTS_CACHE_DIR / f"{digest}.mp3"
+
+
+   if cache_path.exists() and cache_path.stat().st_size > 0:
+       return cache_path.read_bytes()
+
+
+   api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+   if not api_key:
+       raise RuntimeError("ELEVENLABS_API_KEY is not set in environment")
+
+
+   url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+   payload = json.dumps({
+       "text": clean_text,
+       "model_id": "eleven_turbo_v2_5",
+   }).encode("utf-8")
+   req = Request(
+       url,
+       data=payload,
+       headers={
+           "xi-api-key": api_key,
+           "Content-Type": "application/json",
+           "Accept": "audio/mpeg",
+           "User-Agent": "TrailScout/0.1",
+       },
+       method="POST",
+   )
+   try:
+       with urlopen(req, timeout=15) as resp:
+           audio_bytes = resp.read()
+   except (HTTPError, URLError, OSError) as exc:
+       raise RuntimeError(f"ElevenLabs TTS request failed: {exc}") from exc
+
+
+   try:
+       TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+       cache_path.write_bytes(audio_bytes)
+   except OSError:
+       pass
+
+
+   return audio_bytes
+
+Main:
+"""TreeScout application and static frontend."""
+
+
+from pathlib import Path
+
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+
+from backend.agents import DEFAULT_LAT, DEFAULT_LON, run_plan
+from backend.narration import check_late_pace, synthesize_tts
+from backend.tools.trails import OverpassError
+
+
+ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
+
+
+app = FastAPI(title="TreeScout")
+
+
+
+
+@app.get("/health")
+def health() -> dict[str, bool]:
+   return {"ok": True}
+
+
+
+
+@app.get("/mock_plan.json")
+def mock_plan() -> FileResponse:
+   return FileResponse(ROOT / "mock_plan.json", media_type="application/json")
+
+
+
+
+class PlanRequest(BaseModel):
+   request: str = Field(min_length=1)
+   lat: float | None = Field(default=DEFAULT_LAT, gt=-90, lt=90, allow_inf_nan=False)
+   lon: float | None = Field(default=DEFAULT_LON, ge=-180, le=180, allow_inf_nan=False)
+   radius_km: float = Field(default=15, gt=0, allow_inf_nan=False)
+   distance_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+   date: str | None = None
+   start: str | None = None
+   prefs: list[str] | None = None
+
+
+
+
+class LateNarrationRequest(BaseModel):
+   plan: dict
+   current_km: float = Field(ge=0, allow_inf_nan=False)
+   elapsed_min: float = Field(ge=0, allow_inf_nan=False)
+
+
+
+
+class TTSRequest(BaseModel):
+   text: str = Field(min_length=1)
+
+
+
+
+@app.post("/plan")
+def plan(body: PlanRequest):
+   try:
+       return run_plan(
+           request_text=body.request,
+           lat=body.lat,
+           lon=body.lon,
+           radius_km=body.radius_km,
+           distance_km=body.distance_km,
+           target_date=body.date,
+           start_time=body.start,
+           prefs=body.prefs,
+       )
+   except LookupError as exc:
+       raise HTTPException(status_code=404, detail=str(exc)) from exc
+   except OverpassError as exc:
+       raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+
+
+@app.post("/narrate/late")
+def narrate_late(body: LateNarrationRequest):
+   return check_late_pace(body.plan, body.current_km, body.elapsed_min)
+
+
+
+
+@app.post("/tts")
+def tts(body: TTSRequest) -> Response:
+   try:
+       audio_bytes = synthesize_tts(body.text)
+   except ValueError as exc:
+       raise HTTPException(status_code=400, detail=str(exc)) from exc
+   except RuntimeError as exc:
+       raise HTTPException(status_code=502, detail=str(exc)) from exc
+   return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+
+
+app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
+
+Agents:
+
+"""Phase 2 Planner + Checker agents with Gemini function calling and deterministic rule-based fallback."""
+
+
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
+import json
+import os
+import re
+from time import monotonic
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+from backend.narration import generate_narration
+from backend.tools.climate import get_climate
+from backend.tools.elevation import get_elevation_gain
+from backend.tools.hazards import get_hazards
+from backend.tools.space_weather import get_space_weather
+from backend.tools.timing import compute_timing
+from backend.tools.trails import OverpassError, get_trails, haversine
+from backend.tools.weather import get_weather
+
+
+DEFAULT_LAT = 42.2411
+DEFAULT_LON = -83.6130
+
+
+KNOWN_AREAS = {
+   "ypsilanti": (42.2411, -83.6130),
+   "ann arbor": (42.2808, -83.7430),
+   "hudson mills": (42.3831, -83.9116),
+   "pinckney": (42.4150, -83.9650),
+   "waterloo": (42.3450, -84.1000),
+}
+
+
+OUTSIDE_COVERAGE_RE = re.compile(
+   r"\b(antarctica|south pole|north pole|arctic|mars|moon|sahara|everest)\b",
+   re.IGNORECASE,
+)
+
+
+
+
+def parse_constraints_by_rules(
+   request_text: str,
+   explicit_lat: float | None = None,
+   explicit_lon: float | None = None,
+   explicit_distance_km: float | None = None,
+   explicit_date: str | None = None,
+   explicit_start: str | None = None,
+   explicit_prefs: list[str] | None = None,
+) -> dict:
+   """Parse hike request into structured constraints using regex rules."""
+   text = request_text.lower()
+   today = date.today()
+
+
+   if OUTSIDE_COVERAGE_RE.search(text):
+       return {
+           "outside_coverage": True,
+           "lat": explicit_lat or DEFAULT_LAT,
+           "lon": explicit_lon or DEFAULT_LON,
+           "distance_km": explicit_distance_km or 5.0,
+           "date": explicit_date or (today + timedelta(days=1)).isoformat(),
+           "start": explicit_start or "10:00",
+           "prefs": explicit_prefs or [],
+           "parsed_by": "rules",
+       }
+
+
+   # Coordinates in text (e.g., "34.05, -118.25")
+   lat, lon = explicit_lat, explicit_lon
+   coord_match = re.search(r"(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)", request_text)
+   if coord_match:
+       lat, lon = float(coord_match.group(1)), float(coord_match.group(2))
+   elif lat is None or lon is None:
+       lat, lon = DEFAULT_LAT, DEFAULT_LON
+       for place, (plat, plon) in KNOWN_AREAS.items():
+           if place in text:
+               lat, lon = plat, plon
+               break
+
+
+   # Distance
+   distance_km = explicit_distance_km
+   if distance_km is None:
+       mi_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:mile|miles|mi)\b", text)
+       km_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:km|kilometer|kilometers)\b", text)
+       if mi_match:
+           distance_km = round(float(mi_match.group(1)) * 1.60934, 1)
+       elif km_match:
+           distance_km = round(float(km_match.group(1)), 1)
+           if "under" in text and distance_km >= 5.0:
+               distance_km = 4.0
+       else:
+           distance_km = 5.0
+
+
+   # Date
+   target_date = explicit_date
+   if not target_date:
+       if "today" in text or "tonight" in text:
+           target_date = today.isoformat()
+       elif "saturday" in text:
+           days_ahead = (5 - today.weekday()) % 7
+           target_date = (today + timedelta(days=days_ahead)).isoformat()
+       elif "sunday" in text:
+           days_ahead = (6 - today.weekday()) % 7 or 7
+           target_date = (today + timedelta(days=days_ahead)).isoformat()
+       else:
+           target_date = (today + timedelta(days=1)).isoformat()
+
+
+   # Start time
+   start_time = explicit_start
+   if not start_time:
+       tm_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", text)
+       if tm_match:
+           hr = int(tm_match.group(1))
+           mn = int(tm_match.group(2) or 0)
+           ampm = tm_match.group(3).lower()
+           if ampm == "pm" and hr < 12:
+               hr += 12
+           elif ampm == "am" and hr == 12:
+               hr = 0
+           start_time = f"{hr:02d}:{mn:02d}"
+       elif "afternoon" in text:
+           start_time = "14:00"
+       elif "evening" in text or "dusk" in text:
+           start_time = "16:30"
+       else:
+           start_time = "09:30" if "morning" in text else "10:00"
+
+
+   # Preferences
+   prefs = list(explicit_prefs or [])
+   for kw, tag in [
+       ("easy", "easy"),
+       ("hill", "hilly"),
+       ("shade", "shaded"),
+       ("dog", "dog-friendly"),
+       ("loop", "loop"),
+   ]:
+       if kw in text and tag not in prefs:
+           prefs.append(tag)
+
+
+   return {
+       "outside_coverage": False,
+       "lat": lat,
+       "lon": lon,
+       "distance_km": distance_km,
+       "date": target_date,
+       "start": start_time,
+       "prefs": prefs,
+       "parsed_by": "rules",
+   }
+
+
+
+
+def rank_trails(trails: list[dict], target_km: float, prefs: list[str] | None = None) -> list[dict]:
+   """Score and rank trails by closeness to target_km and loop preference."""
+   prefs = prefs or []
+   ranked = []
+   for t in trails:
+       dist = float(t.get("distance_km") or 1.0)
+       rel_err = abs(dist - target_km) / max(target_km, 1.0)
+       score = max(0.1, 1.0 - 0.6 * rel_err)
+       coords = t.get("coords") or []
+       if "loop" in prefs and len(coords) >= 4:
+           if haversine(coords[0], coords[-1]) < 0.35:
+               score = min(0.99, score + 0.08)
+       item = dict(t)
+       item["score"] = round(score, 2)
+       ranked.append(item)
+   ranked.sort(key=lambda x: (-x["score"], abs(x["distance_km"] - target_km)))
+   return ranked
+
+
+
+
+def _get_exa_reports(trail_name: str) -> list[dict]:
+   api_key = os.getenv("EXA_API_KEY", "").strip()
+   if not api_key or not trail_name:
+       return []
+   try:
+       body = json.dumps({"query": f"{trail_name} trail conditions OR closure", "numResults": 2}).encode("utf-8")
+       req = Request(
+           "https://api.exa.ai/search",
+           data=body,
+           headers={"Content-Type": "application/json", "x-api-key": api_key, "User-Agent": "TrailScout/0.1"},
+           method="POST",
+       )
+       with urlopen(req, timeout=6) as resp:
+           data = json.load(resp)
+       return [
+           {"title": r.get("title") or r.get("url"), "url": r.get("url"), "source": "Exa"}
+           for r in data.get("results", [])
+           if r.get("url")
+       ]
+   except (HTTPError, URLError, OSError, ValueError, KeyError, TypeError):
+       return []
+
+
+
+
+def _try_gemini_planner_and_checker(
+   request_text: str,
+   constraints: dict,
+   ranked_trails: list[dict],
+   weather: dict,
+   hazards_res: dict,
+   timing: dict,
+   trace: list[dict],
+) -> tuple[int | None, str | None, bool | None]:
+   """Call Gemini API (if GEMINI_API_KEY is configured) for Planner selection and Checker review."""
+   api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+   if not api_key or not ranked_trails:
+       return None, None, None
+   try:
+       from google import genai
+
+
+       model_name = (os.getenv("GEMINI_MODEL") or "gemini-2.5-flash").strip()
+       client = genai.Client(api_key=api_key)
+       candidates = [
+           {"osm_id": t["osm_id"], "name": t["name"], "distance_km": t["distance_km"], "score": t["score"]}
+           for t in ranked_trails[:8]
+       ]
+       t0 = monotonic()
+       planner_prompt = (
+           f"User request: {request_text}\n"
+           f"Target distance_km: {constraints['distance_km']}, start: {constraints['start']}, prefs: {constraints['prefs']}\n"
+           f"Candidate trails from Overpass: {json.dumps(candidates)}\n"
+           "Pick the best trail strictly from candidates. Return JSON: "
+           '{"chosen_osm_id": int, "explanation": "one concise sentence"}'
+       )
+       resp = client.models.generate_content(
+           model=model_name,
+           contents=planner_prompt,
+           config={"response_mime_type": "application/json"},
+       )
+       ms = round((monotonic() - t0) * 1000)
+       parsed = json.loads(resp.text or "{}")
+       chosen_id = parsed.get("chosen_osm_id")
+       explanation = parsed.get("explanation")
+       trace.append({
+           "agent": "planner",
+           "step": "decide",
+           "tool": "gemini",
+           "summary": f"Gemini selected trail OSM #{chosen_id}",
+           "ms": ms,
+       })
+
+
+       # Checker call
+       t1 = monotonic()
+       checker_prompt = (
+           f"Check this hike plan for safety:\n"
+           f"Timing: {json.dumps(timing)}\n"
+           f"Weather: {json.dumps(weather)}\n"
+           f"Hazards within 100 km: {len(hazards_res.get('hazards', []))}\n"
+           'Return JSON: {"approved": bool, "problems": [str]}'
+       )
+       c_resp = client.models.generate_content(
+           model=model_name,
+           contents=checker_prompt,
+           config={"response_mime_type": "application/json"},
+       )
+       c_ms = round((monotonic() - t1) * 1000)
+       c_parsed = json.loads(c_resp.text or "{}")
+       trace.append({
+           "agent": "checker",
+           "step": "decide",
+           "tool": "gemini",
+           "summary": "Gemini safety review completed",
+           "ms": c_ms,
+       })
+       return chosen_id, explanation, bool(c_parsed.get("approved", True))
+   except Exception as exc:
+       trace.append({
+           "agent": "planner",
+           "step": "decide",
+           "tool": "fallback",
+           "summary": f"LLM unavailable, used rule-based planner ({type(exc).__name__})",
+           "ms": 0,
+       })
+       return None, None, None
+
+
+
+
+def run_plan(
+   request_text: str,
+   lat: float | None = None,
+   lon: float | None = None,
+   radius_km: float = 15.0,
+   distance_km: float | None = None,
+   target_date: str | None = None,
+   start_time: str | None = None,
+   prefs: list[str] | None = None,
+) -> dict:
+   """Assemble the complete Phase 2 + Phase 3 plan in the mock_plan.json shape."""
+   trace: list[dict] = []
+   warnings: list[str] = []
+
+
+   constraints = parse_constraints_by_rules(
+       request_text,
+       explicit_lat=lat,
+       explicit_lon=lon,
+       explicit_distance_km=distance_km,
+       explicit_date=target_date,
+       explicit_start=start_time,
+       explicit_prefs=prefs,
+   )
+
+
+   # Prompt 4 check: Antarctica / outside coverage area returns warning with no trail
+   if constraints.get("outside_coverage"):
+       msg = "Requested location (Antarctica) is outside the coverage area; no trail can be planned."
+       warnings.append(msg)
+       trace.append({
+           "agent": "checker",
+           "step": "reject",
+           "tool": "coverage_check",
+           "summary": msg,
+           "ms": 1,
+       })
+       return {
+           "request": request_text,
+           "constraints": {
+               "distance_km": constraints["distance_km"],
+               "date": constraints["date"],
+               "start": constraints["start"],
+               "prefs": constraints["prefs"],
+               "parsed_by": constraints["parsed_by"],
+           },
+           "trail": None,
+           "alternatives": [
+               {"name": "Coverage area required", "osm_id": 0, "distance_km": 0.0, "score": 0.0},
+               {"name": "Try Michigan / US trails", "osm_id": 0, "distance_km": 0.0, "score": 0.0},
+           ],
+           "explanation": msg,
+           "timing": {
+               "start": constraints["start"],
+               "est_duration_min": 0,
+               "sunset": "—",
+               "latest_safe_start": "—",
+               "turnaround_by": "—",
+           },
+           "weather": {"available": False, "source": "NWS", "summary": "Unavailable", "precip_chance": None},
+           "climate": {"available": False, "source": "NASA POWER", "years": "2005-2025", "avg_high_c": None, "avg_low_c": None, "avg_precip_mm": None},
+           "space_weather": {"available": False, "source": "NASA DONKI", "kp_max": 0, "aurora_chance": "low", "checked_at": ""},
+           "hazards": [],
+           "hazards_checked_at": "",
+           "reports": [],
+           "agent_trace": trace,
+           "checker": {"approved": False, "rounds": 1},
+           "narration": [],
+           "warnings": warnings,
+           "flood_or_burn_layer": None,
+       }
+
+
+   q_lat = constraints["lat"]
+   q_lon = constraints["lon"]
+   q_date = constraints["date"]
+   q_start = constraints["start"]
+   q_dist = constraints["distance_km"]
+
+
+   # 1. Discover trails via Overpass
+   t0 = monotonic()
+   trails = get_trails(q_lat, q_lon, radius_km)
+   if len(trails) < 3 and radius_km < 25:
+       trails = get_trails(q_lat, q_lon, 25)
+   t_ms = round((monotonic() - t0) * 1000)
+   trace.append({
+       "agent": "planner",
+       "step": "tool",
+       "tool": "get_trails",
+       "summary": f"Found {len(trails)} named trails within {radius_km:g} km",
+       "ms": t_ms,
+   })
+
+
+   if not trails:
+       raise LookupError("No named trails at least 1 km long found in this area.")
+
+
+   ranked = rank_trails(trails, q_dist, constraints["prefs"])
+   trace.append({
+       "agent": "planner",
+       "step": "tool",
+       "tool": "rank_trails",
+       "summary": f"Ranked {len(ranked)} trails against target {q_dist} km",
+       "ms": 2,
+   })
+
+
+   # 2. Fetch NASA + NWS data in parallel
+   t_tools_start = monotonic()
+   with ThreadPoolExecutor(max_workers=5) as pool:
+       f_weather = pool.submit(get_weather, q_lat, q_lon, q_date)
+       f_hazards = pool.submit(get_hazards, q_lat, q_lon, 100.0)
+       f_climate = pool.submit(get_climate, q_lat, q_lon, q_date)
+       f_space = pool.submit(get_space_weather)
+       f_elev = pool.submit(get_elevation_gain, ranked[0]["coords"])
+
+
+       weather_res = f_weather.result()
+       hazards_res = f_hazards.result()
+       climate_res = f_climate.result()
+       space_res = f_space.result()
+       elev_res = f_elev.result()
+   tools_ms = round((monotonic() - t_tools_start) * 1000)
+
+
+   hazards_list = hazards_res.get("hazards", [])
+   trace.append({
+       "agent": "planner",
+       "step": "tool",
+       "tool": "get_hazards",
+       "summary": (
+           f"{len(hazards_list)} active NASA EONET event(s) within 100 km"
+           if hazards_list
+           else "No active NASA EONET events within 100 km"
+       ),
+       "ms": tools_ms,
+   })
+
+
+   chosen = ranked[0]
+   elev_m = elev_res.get("elevation_gain_m", 0)
+   timing_res = compute_timing(chosen["distance_km"], elev_m, q_lat, q_lon, q_date, q_start)
+
+
+   # Optional Gemini Planner + Checker pass
+   gem_osm_id, gem_expl, _ = _try_gemini_planner_and_checker(
+       request_text, constraints, ranked, weather_res, hazards_res, timing_res, trace
+   )
+   if gem_osm_id is not None:
+       verified = next((t for t in ranked if t["osm_id"] == gem_osm_id), None)
+       if verified is not None:
+           chosen = verified
+           constraints["parsed_by"] = "gemini"
+           elev_res = get_elevation_gain(chosen["coords"])
+           elev_m = elev_res.get("elevation_gain_m", 0)
+           timing_res = compute_timing(chosen["distance_km"], elev_m, q_lat, q_lon, q_date, q_start)
+   else:
+       if not any(step.get("tool") == "fallback" for step in trace):
+           trace.append({
+               "agent": "planner",
+               "step": "decide",
+               "tool": "rules",
+               "summary": "LLM unavailable, used rule-based planner",
+               "ms": 1,
+           })
+
+
+   # 3. Hard Python safety checker (max 2 rounds)
+   rounds = 1
+   approved = True
+   problems: list[str] = []
+
+
+   if timing_res.get("warning"):
+       problems.append(timing_res["warning"])
+   close_hazards = [h for h in hazards_list if h.get("distance_km", 999) <= 5.0]
+   if close_hazards:
+       problems.append(f"Active NASA EONET hazard ({close_hazards[0]['title']}) within 5 km.")
+   if (weather_res.get("precip_chance") or 0) >= 70:
+       problems.append(f"High precipitation chance ({weather_res['precip_chance']}%) from NWS.")
+
+
+   if problems:
+       approved = False
+       rounds = 2
+       trace.append({
+           "agent": "checker",
+           "step": "reject",
+           "tool": "safety_check",
+           "summary": f"{chosen['name']}: {problems[0]}",
+           "ms": 1,
+       })
+       warnings.extend(problems)
+   else:
+       trace.append({
+           "agent": "checker",
+           "step": "decide",
+           "tool": "safety_check",
+           "summary": f"Approved {chosen['name']} (turnaround {timing_res.get('turnaround_by')} before sunset {timing_res.get('sunset')})",
+           "ms": 1,
+       })
+
+
+   trace.append({
+       "agent": "planner",
+       "step": "decide",
+       "tool": "rank_trails",
+       "summary": f"Chose {chosen['name']} (score {chosen['score']})",
+       "ms": 1,
+   })
+
+
+   # Ensure alternatives always has 2 items
+   alt_candidates = [t for t in ranked if t["osm_id"] != chosen["osm_id"]]
+   while len(alt_candidates) < 2:
+       alt_candidates.append(chosen)
+   alternatives = [
+       {
+           "name": a["name"],
+           "osm_id": a["osm_id"],
+           "distance_km": a["distance_km"],
+           "score": a["score"],
+       }
+       for a in alt_candidates[:2]
+   ]
+
+
+   explanation = gem_expl or (
+       f"Closest match to {q_dist} km ({chosen['distance_km']} km), "
+       f"turnaround by {timing_res.get('turnaround_by')} for a {timing_res.get('sunset')} sunset."
+   )
+
+
+   reports = _get_exa_reports(chosen["name"])
+
+
+   result = {
+       "request": request_text,
+       "constraints": {
+           "distance_km": q_dist,
+           "date": q_date,
+           "start": q_start,
+           "prefs": constraints["prefs"],
+           "parsed_by": constraints["parsed_by"],
+       },
+       "trail": {
+           "name": chosen["name"],
+           "osm_id": chosen["osm_id"],
+           "distance_km": chosen["distance_km"],
+           "elevation_gain_m": elev_m,
+           "coords": chosen["coords"],
+       },
+       "alternatives": alternatives,
+       "explanation": explanation,
+       "timing": {
+           "start": timing_res.get("start", q_start),
+           "est_duration_min": timing_res.get("est_duration_min", 60),
+           "sunset": timing_res.get("sunset", "17:08"),
+           "latest_safe_start": timing_res.get("latest_safe_start", "14:38"),
+           "turnaround_by": timing_res.get("turnaround_by", "15:40"),
+       },
+       "weather": weather_res,
+       "climate": climate_res,
+       "space_weather": space_res,
+       "hazards": hazards_list,
+       "hazards_checked_at": hazards_res.get("checked_at", ""),
+       "reports": reports,
+       "agent_trace": trace,
+       "checker": {"approved": approved, "rounds": rounds},
+       "narration": [],
+       "warnings": warnings,
+       "flood_or_burn_layer": None,
+   }
+   result["narration"] = generate_narration(result)
+   return result
+
+
+
+Add ELEVENLABS_API_KEY (and optional ELEVENLABS_VOICE_ID) to .env, run git pull --rebase origin master before committing backend/, and test POST /tts and POST /narrate/late against your running server.

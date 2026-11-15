@@ -226,6 +226,16 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 
 ## Limits
 
+- During Overpass outages, matching stored OSM geometry is used before a live
+  lookup, including older copies for the exact requested bounding box. The
+  planning trace shows the capture timestamp; geometry snapshots do not check
+  current conditions or closures. Seed matching remains limited to 10 km from
+  its recorded center. Without a matching copy, there is one live attempt with
+  a 4-second waiting budget. HTTP 429 stops further attempts across mirrors and
+  starts a cooldown of at least 60 seconds, respecting a longer `Retry-After`.
+  Other failures cool down for 30 seconds. Focused offline checks:
+  `python -m unittest backend.tools.test_outage`.
+
 - **NASA EONET** covers large, reported events (wildfires, severe storms, floods); it does not know about trail closures, fallen trees or local flooding.
 - **NASA POWER** values are ~0.5° grid averages, not trail-specific measurements.
 - **MODIS** imagery has 250 m pixels: good for clouds, snow and smoke, not trail detail.

@@ -150,11 +150,15 @@ def _summarize(name, result, args, label=None):
         return f"{result.get('source')} unavailable: {result.get('error')}"
     if name == "get_trails":
         cached = " (saved copy)" if any(t.get("cached") for t in result["items"]) else ""
+        captured = next((t.get("captured_at") for t in result["items"] if t.get("captured_at")), None)
+        if captured:
+            cached = f" (OpenStreetMap cached geometry captured {captured}; current conditions and closures not checked by this snapshot)"
         snap = result.get("snapshot")
         if snap:
             when = f", OSM data from {str(snap['saved_at'])[:10]}" if snap.get("saved_at") else ""
             what = f"seeded snapshot of {snap['name']}" if snap["kind"] == "seeded" else "saved snapshot"
             cached = f" (from the {what}{when}; Overpass not queried)"
+            cached += f" Geometry captured {snap.get('saved_at') or 'at an unknown time'}; this is not a current conditions or closure check."
         radius = result.get("radius_km", args[2] if len(args) > 2 else 0)
         return f"Found {len(result['items'])} named trails within {radius:g} km{cached}"
     if name == "rank_trails":
