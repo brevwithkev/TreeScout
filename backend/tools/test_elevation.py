@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from backend.tools import elevation
 
 COORDS = [[42.24, -83.61], [42.25, -83.62], [42.26, -83.63]]
-HEIGHTS = [220.0, 230.0, 225.0]  # gain = 10 m
+HEIGHTS = [200.0, 250.0, 300.0]  # a steady 100 m climb (above the 10 m smoothing threshold)
 
 
 class Provider:
@@ -49,14 +49,14 @@ class ElevationTests(unittest.TestCase):
         meteo, oe = Provider(HEIGHTS), Provider(HEIGHTS)
         self.use(meteo, oe)
         result = elevation.get_elevation_gain(COORDS, 101)
-        self.assertEqual((result["elevation_gain_m"], result["source"]), (10, "Open-Meteo Elevation"))
+        self.assertEqual((result["elevation_gain_m"], result["source"]), (100, "Open-Meteo Elevation"))
         self.assertEqual((meteo.calls, oe.calls), (1, 0))
 
     def test_falls_back_to_open_elevation_when_rate_limited(self):
         meteo, oe = Provider(error=rate_limited()), Provider(HEIGHTS)
         self.use(meteo, oe)
         result = elevation.get_elevation_gain(COORDS, 101)
-        self.assertEqual((result["elevation_gain_m"], result["source"]), (10, "Open-Elevation"))
+        self.assertEqual((result["elevation_gain_m"], result["source"]), (100, "Open-Elevation"))
         self.assertEqual((meteo.calls, oe.calls), (1, 1))  # no retry of the 429
 
     def test_cache_is_permanent_and_keyed_by_osm_id(self):
@@ -67,15 +67,15 @@ class ElevationTests(unittest.TestCase):
         entry = next(iter(saved.values()))
         self.assertEqual({k: entry[k] for k in ("source", "elevation_gain_m", "elevation_loss_m", "min_m", "max_m",
                                                 "points_sampled")},
-                         {"source": "Open-Meteo Elevation", "elevation_gain_m": 10, "elevation_loss_m": 5,
-                          "min_m": 220, "max_m": 230, "points_sampled": 3})
+                         {"source": "Open-Meteo Elevation", "elevation_gain_m": 100, "elevation_loss_m": 0,
+                          "min_m": 200, "max_m": 300, "points_sampled": 3})
         self.assertEqual([h for _km, h in entry["profile"]], HEIGHTS)
         self.assertEqual(entry["profile"][0][0], 0.0)
         self.assertAlmostEqual(entry["profile"][-1][0], 2.8, delta=0.1)   # km along the trail
         self.assertTrue(next(iter(saved)).startswith("101:"))
         elevation._cache = None                                # a fresh process reads the file
         again = elevation.get_elevation_gain(COORDS, 101)
-        self.assertEqual((again["elevation_gain_m"], again["source"], meteo.calls), (10, "Open-Meteo Elevation", 1))
+        self.assertEqual((again["elevation_gain_m"], again["source"], meteo.calls), (100, "Open-Meteo Elevation", 1))
         elevation.get_elevation_gain(COORDS, 202)              # same geometry, other trail id: separate entry
         self.assertEqual(meteo.calls, 2)
 

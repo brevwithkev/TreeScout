@@ -1,7 +1,7 @@
 {
  "1181890945:9104d255c902b8b9": {
-  "elevation_gain_m": 337,
-  "elevation_loss_m": 1283,
+  "elevation_gain_m": 11,
+  "elevation_loss_m": 957,
   "max_m": 2071,
   "min_m": 1125,
   "points_sampled": 100,
@@ -410,8 +410,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "1181894382:58f7e1fc4f630225": {
-  "elevation_gain_m": 200,
-  "elevation_loss_m": 567,
+  "elevation_gain_m": 19,
+  "elevation_loss_m": 386,
   "max_m": 1125,
   "min_m": 758,
   "points_sampled": 100,
@@ -820,9 +820,9 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "144433066:64b219afcf757499": {
-  "elevation_gain_m": 172,
-  "elevation_loss_m": 1133,
-  "max_m": 2204,
+  "elevation_gain_m": 0,
+  "elevation_loss_m": 961,
+  "max_m": 2200,
   "min_m": 1236,
   "points_sampled": 100,
   "profile": [
@@ -1230,8 +1230,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "1455449129:98b79f1766ca52c9": {
-  "elevation_gain_m": 195,
-  "elevation_loss_m": 578,
+  "elevation_gain_m": 26,
+  "elevation_loss_m": 409,
   "max_m": 1229,
   "min_m": 846,
   "points_sampled": 100,
@@ -1640,9 +1640,9 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16801569:844f372800e049dd": {
-  "elevation_gain_m": 57,
-  "elevation_loss_m": 58,
-  "max_m": 2056,
+  "elevation_gain_m": 34,
+  "elevation_loss_m": 35,
+  "max_m": 2054,
   "min_m": 2012,
   "points_sampled": 100,
   "profile": [
@@ -2050,9 +2050,9 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16804245:67a62d4a382ddff2": {
-  "elevation_gain_m": 59,
-  "elevation_loss_m": 42,
-  "max_m": 1973,
+  "elevation_gain_m": 20,
+  "elevation_loss_m": 3,
+  "max_m": 1972,
   "min_m": 1945,
   "points_sampled": 30,
   "profile": [
@@ -2180,10 +2180,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16808673:bb8d320e833a0006": {
-  "elevation_gain_m": 433,
-  "elevation_loss_m": 301,
-  "max_m": 1751,
-  "min_m": 1547,
+  "elevation_gain_m": 286,
+  "elevation_loss_m": 154,
+  "max_m": 1734,
+  "min_m": 1575,
   "points_sampled": 100,
   "profile": [
    [
@@ -2590,8 +2590,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16845249:c06adb12b7cb0727": {
-  "elevation_gain_m": 22,
-  "elevation_loss_m": 11,
+  "elevation_gain_m": 11,
+  "elevation_loss_m": 0,
   "max_m": 1994,
   "min_m": 1983,
   "points_sampled": 33,
@@ -2732,9 +2732,9 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16850135:07cb6607d94f8baa": {
-  "elevation_gain_m": 82,
-  "elevation_loss_m": 69,
-  "max_m": 1181,
+  "elevation_gain_m": 46,
+  "elevation_loss_m": 33,
+  "max_m": 1170,
   "min_m": 1125,
   "points_sampled": 47,
   "profile": [
@@ -2930,9 +2930,9 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16850906:bab9d43772b85547": {
-  "elevation_gain_m": 115,
-  "elevation_loss_m": 20,
-  "max_m": 2202,
+  "elevation_gain_m": 95,
+  "elevation_loss_m": 0,
+  "max_m": 2201,
   "min_m": 2105,
   "points_sampled": 97,
   "profile": [
@@ -3328,8 +3328,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16866610:fe8c22616da1a7ba": {
-  "elevation_gain_m": 4,
-  "elevation_loss_m": 51,
+  "elevation_gain_m": 0,
+  "elevation_loss_m": 47,
   "max_m": 2039,
   "min_m": 1992,
   "points_sampled": 35,
@@ -3478,8 +3478,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16869545:68396c7c6184559e": {
-  "elevation_gain_m": 44,
-  "elevation_loss_m": 1,
+  "elevation_gain_m": 43,
+  "elevation_loss_m": 0,
   "max_m": 2092,
   "min_m": 2049,
   "points_sampled": 36,
@@ -3632,8 +3632,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "16869985:db9a80e024bed763": {
-  "elevation_gain_m": 7,
-  "elevation_loss_m": 15,
+  "elevation_gain_m": 0,
+  "elevation_loss_m": 8,
   "max_m": 2000,
   "min_m": 1992,
   "points_sampled": 30,
@@ -3762,8 +3762,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "24831432:a6d1ef7c0f9e9240": {
-  "elevation_gain_m": 35,
-  "elevation_loss_m": 1407,
+  "elevation_gain_m": 0,
+  "elevation_loss_m": 1372,
   "max_m": 2780,
   "min_m": 1408,
   "points_sampled": 100,
@@ -4172,10 +4172,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "24831440:9cc1e288f85488ac": {
-  "elevation_gain_m": 1003,
-  "elevation_loss_m": 406,
-  "max_m": 2343,
-  "min_m": 1427,
+  "elevation_gain_m": 903,
+  "elevation_loss_m": 306,
+  "max_m": 2336,
+  "min_m": 1429,
   "points_sampled": 100,
   "profile": [
    [
@@ -4582,8 +4582,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "24831816:797e8558a58ae4fa": {
-  "elevation_gain_m": 763,
-  "elevation_loss_m": 37,
+  "elevation_gain_m": 726,
+  "elevation_loss_m": 0,
   "max_m": 2205,
   "min_m": 1479,
   "points_sampled": 100,
@@ -4992,8 +4992,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "24836629:4d454a525510bb1c": {
-  "elevation_gain_m": 683,
-  "elevation_loss_m": 11,
+  "elevation_gain_m": 672,
+  "elevation_loss_m": 0,
   "max_m": 2247,
   "min_m": 1575,
   "points_sampled": 100,
@@ -5402,8 +5402,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "27455631:2e039bec21c718b5": {
-  "elevation_gain_m": 615,
-  "elevation_loss_m": 14,
+  "elevation_gain_m": 601,
+  "elevation_loss_m": 0,
   "max_m": 2168,
   "min_m": 1567,
   "points_sampled": 100,
@@ -5822,9 +5822,9 @@
   "source": "Open-Elevation"
  },
  "2836796:e1b3b5c03d0bd107": {
-  "elevation_gain_m": 1695,
-  "elevation_loss_m": 255,
-  "max_m": 2204,
+  "elevation_gain_m": 1440,
+  "elevation_loss_m": 0,
+  "max_m": 2198,
   "min_m": 757,
   "points_sampled": 100,
   "profile": [
@@ -6232,8 +6232,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "2836803:731d7243360fc90a": {
-  "elevation_gain_m": 286,
-  "elevation_loss_m": 1612,
+  "elevation_gain_m": 14,
+  "elevation_loss_m": 1340,
   "max_m": 2084,
   "min_m": 758,
   "points_sampled": 100,
@@ -6662,10 +6662,10 @@
   "source": "Open-Elevation"
  },
  "399341771:6f7841ac12440f2e": {
-  "elevation_gain_m": 31,
-  "elevation_loss_m": 28,
-  "max_m": 230,
-  "min_m": 220,
+  "elevation_gain_m": 3,
+  "elevation_loss_m": 0,
+  "max_m": 228,
+  "min_m": 221,
   "points_sampled": 67,
   "profile": [
    [
@@ -6950,10 +6950,10 @@
   "source": "Open-Meteo Elevation"
  },
  "411440161:f078bf2b23be674d": {
-  "elevation_gain_m": 34,
-  "elevation_loss_m": 34,
-  "max_m": 254,
-  "min_m": 239,
+  "elevation_gain_m": 0,
+  "elevation_loss_m": 0,
+  "max_m": 252,
+  "min_m": 240,
   "points_sampled": 100,
   "profile": [
    [
@@ -7365,10 +7365,10 @@
   "source": "Open-Elevation"
  },
  "48372890:0a2aaf56cbb2ce1a": {
-  "elevation_gain_m": 181,
-  "elevation_loss_m": 173,
-  "max_m": 1558,
-  "min_m": 1480,
+  "elevation_gain_m": 72,
+  "elevation_loss_m": 64,
+  "max_m": 1556,
+  "min_m": 1482,
   "points_sampled": 100,
   "profile": [
    [
@@ -7785,9 +7785,9 @@
   "source": "Open-Meteo Elevation"
  },
  "59432705:c4eb5ad64a29d117": {
-  "elevation_gain_m": 230,
-  "elevation_loss_m": 33,
-  "max_m": 1692,
+  "elevation_gain_m": 197,
+  "elevation_loss_m": 0,
+  "max_m": 1687,
   "min_m": 1490,
   "points_sampled": 100,
   "profile": [
@@ -8195,8 +8195,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "59436263:88bd603f9fc78692": {
-  "elevation_gain_m": 660,
-  "elevation_loss_m": 59,
+  "elevation_gain_m": 601,
+  "elevation_loss_m": 0,
   "max_m": 2009,
   "min_m": 1408,
   "points_sampled": 100,
@@ -8605,8 +8605,8 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "60649958:01d353a2903fcfec": {
-  "elevation_gain_m": 133,
-  "elevation_loss_m": 317,
+  "elevation_gain_m": 48,
+  "elevation_loss_m": 232,
   "max_m": 1589,
   "min_m": 1405,
   "points_sampled": 100,
@@ -9015,10 +9015,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "60649960:5f79d6fa5bc4780a": {
-  "elevation_gain_m": 59,
-  "elevation_loss_m": 60,
-  "max_m": 1524,
-  "min_m": 1490,
+  "elevation_gain_m": 25,
+  "elevation_loss_m": 26,
+  "max_m": 1518,
+  "min_m": 1492,
   "points_sampled": 27,
   "profile": [
    [
@@ -9133,10 +9133,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "60649964:b0c893f7cbbcc739": {
-  "elevation_gain_m": 103,
-  "elevation_loss_m": 97,
-  "max_m": 1442,
-  "min_m": 1399,
+  "elevation_gain_m": 31,
+  "elevation_loss_m": 25,
+  "max_m": 1439,
+  "min_m": 1403,
   "points_sampled": 100,
   "profile": [
    [
@@ -9543,10 +9543,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "65584393:1f12f80c4722978d": {
-  "elevation_gain_m": 132,
-  "elevation_loss_m": 201,
+  "elevation_gain_m": 27,
+  "elevation_loss_m": 96,
   "max_m": 1427,
-  "min_m": 1342,
+  "min_m": 1344,
   "points_sampled": 100,
   "profile": [
    [
@@ -9953,10 +9953,10 @@
   "source": "NASA SRTM via OpenTopoData"
  },
  "75670403:dbf8ff1d8bfffe17": {
-  "elevation_gain_m": 56,
-  "elevation_loss_m": 48,
+  "elevation_gain_m": 18,
+  "elevation_loss_m": 10,
   "max_m": 2141,
-  "min_m": 2116,
+  "min_m": 2120,
   "points_sampled": 91,
   "profile": [
    [

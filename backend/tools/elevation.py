@@ -22,6 +22,7 @@ import os
 import time
 
 from backend.tools.common import USER_AGENT, get_json, now_iso, unavailable
+from backend.tools.profile import stats
 from backend.tools.trails import haversine
 
 logger = logging.getLogger("treescout.elevation")
@@ -177,16 +178,33 @@ def get_elevation_gain(coords, osm_id=None):
             if len(heights) != len(points) or any(h is None for h in heights):
                 failures.append(f"{name}: expected {len(points)} elevations, got {len(heights)}")
                 continue
-            gain = sum(max(0.0, b - a) for a, b in zip(heights, heights[1:]))
-            loss = sum(max(0.0, a - b) for a, b in zip(heights, heights[1:]))
-            entry = {"source": name, "elevation_gain_m": round(gain), "elevation_loss_m": round(loss),
-                     "min_m": round(min(heights)), "max_m": round(max(heights)), "points_sampled": len(points),
-                     "profile": [[round(k, 3), round(h, 1)] for k, h in zip(_sample_km(full), heights)]}
+            profile = [[round(k, 3), round(h, 1)] for k, h in zip(_sample_km(full), heights)]
+            # Smoothed totals (backend/tools/profile.py): 50 m resampling, 3-point average, 10 m hysteresis.
+            entry = {"source": name, **stats(profile), "points_sampled": len(points), "profile": profile}
             _store(key, entry)
             return {**entry, "checked_at": now_iso()}
         return unavailable("Elevation (NASA SRTM via OpenTopoData, Open-Meteo, Open-Elevation)", "; ".join(failures))
     except Exception as exc:  # noqa: BLE001
         return unavailable(SOURCE, f"{type(exc).__name__}: {exc}")
+
+
+def recompute_from_profiles():
+    """Recompute gain/loss/min/max of every cached entry that has a stored profile (no network). Returns
+    (recomputed, without_profile)."""
+    with _lock:
+        cache = _load()
+        done = skipped = 0
+        for key, entry in cache.items():
+            if entry.get("profile"):
+                entry.update(stats(entry["profile"]))
+                done += 1
+            else:
+                skipped += 1
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CACHE_FILE.with_name(f"{CACHE_FILE.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
+        tmp.replace(CACHE_FILE)
+    return done, skipped
 
 
 def precompute(fixture=None, pause_s=PRECOMPUTE_PAUSE_S, seeds=False):
@@ -218,8 +236,11 @@ def precompute(fixture=None, pause_s=PRECOMPUTE_PAUSE_S, seeds=False):
 
 if __name__ == "__main__":
     import sys
+    if sys.argv[1:] == ["recompute"]:
+        print("recomputed %d entries from their stored profiles; %d have no profile" % recompute_from_profiles())
+        sys.exit(0)
     if sys.argv[1:] not in (["precompute"], ["precompute", "seeds"]):
-        print("usage: python -m backend.tools.elevation precompute [seeds]")
+        print("usage: python -m backend.tools.elevation precompute [seeds] | recompute")
         sys.exit(2)
     logging.basicConfig(level=logging.ERROR)
     sys.exit(1 if precompute(seeds=sys.argv[2:] == ["seeds"])[1] else 0)

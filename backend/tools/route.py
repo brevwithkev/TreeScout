@@ -6,6 +6,7 @@ back the same way. Climbing counts both directions: descending on the way out is
 route's climb is the sum of the positive changes over the whole out-and-back profile.
 """
 
+from backend.tools.profile import climb_descent, height_at, smooth, upto
 from backend.tools.trails import haversine
 
 LOOP_MAX_GAP_KM = 0.5   # e.g. Rolling Hills MTB Trail (ends 0.30 km apart) and North Meadow Trail Loop (0.58 km: no)
@@ -57,40 +58,29 @@ def _cut(coords, km):
     return out
 
 
-def _heights_to(profile, km):
-    """Heights from the start to km along the trail, the last one interpolated at km."""
-    out = []
-    for i, (k, h) in enumerate(profile):
-        if k <= km:
-            out.append(h)
-            continue
-        if i:
-            k0, h0 = profile[i - 1]
-            out.append(h0 + (h - h0) * ((km - k0) / ((k - k0) or 1.0)))
-        break
-    return out
-
-
 def climb_m(elevation, kind, length_km, turn_km):
-    """Total climbing on the route in m, or None when the elevation is unknown.
+    """(total climbing on the route in m, net drop to the turnaround in m); (None, None) when unknown.
 
-    elevation: a get_elevation_gain result (profile [[km, m], ...] when known, else gain/loss totals).
+    elevation: a get_elevation_gain result (raw profile [[km, m], ...] when known, else gain/loss totals). The
+    profile is smoothed first (backend/tools/profile.py). Out-and-back: the climbs on the way out plus the descents
+    (climbed on the way back), never less than the net drop (start minus turnaround elevation).
     """
     if not isinstance(elevation, dict) or elevation.get("available") is False:
-        return None
+        return None, None
     gain = elevation.get("elevation_gain_m")
     if gain is None:
-        return None
+        return None, None
     if kind == "loop":
-        return round(gain)
+        return round(gain), None
     profile = elevation.get("profile")
     if profile and len(profile) >= 2:
-        heights = _heights_to(profile, turn_km)
-        steps = [b - a for a, b in zip(heights, heights[1:])]
-        return round(sum(abs(s) for s in steps))  # out: the rises; back: the drops, climbed in reverse
+        out = upto(smooth(profile), turn_km)
+        climb, descent = climb_descent([h for _, h in out])
+        net_drop = out[0][1] - out[-1][1]
+        return round(max(climb + descent, abs(net_drop))), round(net_drop)
     loss = elevation.get("elevation_loss_m", gain)  # older cache entries: assume the trail ends where it began
     fraction = min(1.0, turn_km / length_km) if length_km else 1.0
-    return round((gain + loss) * fraction)
+    return round((gain + loss) * fraction), None
 
 
 def trailhead_distance_km(trail, ref):
@@ -119,7 +109,7 @@ def _orient(coords, elevation, ref):
 
 
 def make_route(trail, target_km=None, elevation=None, ref=None):
-    """The plan's route for a trail: {kind, route_km, trail_km, turnaround_km, turnaround_index, coords, climb_m}.
+    """The plan's route: {kind, route_km, trail_km, turnaround_km, turnaround_index, coords, climb_m, net_drop_m}.
 
     coords for out-and-back start at the end nearer ref, go out to the turnaround and back the same way (the map,
     the simulation and the narration follow them); turnaround_index is the coordinate index of the turnaround.
@@ -129,12 +119,14 @@ def make_route(trail, target_km=None, elevation=None, ref=None):
     if not is_loop(coords):
         coords, elevation = _orient(coords, elevation, ref)
     if is_loop(coords):
+        climb, _ = climb_m(elevation, "loop", length, length)
         return {"kind": "loop", "route_km": round(length, 3), "trail_km": round(length, 3), "turnaround_km": None,
-                "turnaround_index": None, "coords": coords, "climb_m": climb_m(elevation, "loop", length, length)}
+                "turnaround_index": None, "coords": coords, "climb_m": climb, "net_drop_m": None}
     total = route_km({**trail, "trail_km": length}, target_km)
     turn = min(length, total / 2)
     out = _cut(coords, turn) if turn < length else coords
     route = out + out[-2::-1]
+    climb, net_drop = climb_m(elevation, "out-and-back", length, turn)
     return {"kind": "out-and-back", "route_km": round(2 * turn, 3), "trail_km": round(length, 3),
             "turnaround_km": round(turn, 3), "turnaround_index": len(out) - 1, "coords": route,
-            "climb_m": climb_m(elevation, "out-and-back", length, turn)}
+            "climb_m": climb, "net_drop_m": net_drop}
