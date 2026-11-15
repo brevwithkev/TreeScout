@@ -2,7 +2,10 @@
 
 from backend.tools.trails import haversine
 
-WEIGHTS = {"distance": 0.5, "loop": 0.2, "center": 0.2, "elevation": 0.1}
+# Distance dominates: loop + center + elevation together are worth at most 0.25, so a trail whose
+# distance part is more than 1/3 higher (i.e. much closer to the requested distance) always ranks first.
+WEIGHTS = {"distance": 0.75, "loop": 0.1, "center": 0.1, "elevation": 0.05}
+ELEVATION_UNKNOWN = 0.5   # neutral elevation part when easy/hilly was asked but the gain is unknown
 LOOP_MAX_GAP_KM = 0.2
 CENTER_RADIUS_KM = 15.0   # matches the default /plan search radius
 HILLY_M_PER_KM = 30.0     # gain per km treated as "fully hilly"
@@ -24,18 +27,22 @@ def _parts(trail, target_km, prefs, center):
         parts["center"] = max(0.0, 1 - trailhead_km / CENTER_RADIUS_KM)
     gain = trail.get("elevation_gain_m")
     wants = {"easy", "hilly"} & set(prefs or [])
-    if gain is not None and distance > 0 and len(wants) == 1:
-        steepness = min(1.0, float(gain) / distance / HILLY_M_PER_KM)
-        parts["elevation"] = steepness if "hilly" in wants else 1 - steepness
+    if len(wants) == 1:  # same parts for every trail, so scores compare fairly
+        if gain is not None and distance > 0:
+            steepness = min(1.0, float(gain) / distance / HILLY_M_PER_KM)
+            parts["elevation"] = steepness if "hilly" in wants else 1 - steepness
+        else:
+            parts["elevation"] = ELEVATION_UNKNOWN
     return parts
 
 
 def rank_trails(trails, constraints, center_lat, center_lon):
     """Return copies of all trails sorted best-first, each with "score" (0-1) and "score_parts".
 
-    Weights: distance closeness 0.5, loop 0.2, closeness to center 0.2, elevation preference 0.1.
-    A component that cannot be computed (no target distance, unknown elevation, no easy/hilly
-    preference) is left out and the remaining weights are renormalized, so scores stay 0-1.
+    Weights: distance closeness 0.75, loop 0.1, closeness to center 0.1, elevation preference 0.05.
+    Every trail gets the same parts: distance only when a target distance is given, elevation only for
+    an easy/hilly preference (neutral 0.5 when a trail's gain is unknown). Weights are renormalized over
+    those parts, so scores stay 0-1 and a trail whose distance part is more than 1/3 higher always wins.
     """
     constraints = constraints or {}
     target = constraints.get("distance_km")

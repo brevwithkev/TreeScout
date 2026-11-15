@@ -61,10 +61,20 @@ To save voice audio for recordings that don't have it yet, run `python -m backen
 
 The **Demo plans** dropdown (shown whenever recordings exist) loads one with a single click. `GET /demo/plans` lists them.
 
+### Elevation cache
+
+Elevation gain is cached permanently in `backend/data/elevation_cache.json` (committed), by trail OSM id and route. To fill it for every trail in the saved Ypsilanti snapshot, run:
+
+```powershell
+python -m backend.tools.elevation precompute
+```
+
+It skips cached trails and pauses between lookups. If a provider is rate-limited (Open-Meteo has a daily limit), run it again later and commit the updated file.
+
 ### Tests
 
 ```powershell
-python -m unittest backend.test_agents backend.test_narration backend.test_demo backend.tools.test_trails backend.tools.test_data_cache  # offline
+python -m unittest backend.test_agents backend.test_narration backend.test_demo backend.tools.test_trails backend.tools.test_data_cache backend.tools.test_ranking backend.tools.test_elevation  # offline
 python tests/test_tools.py                                  # live data tools, Ypsilanti, tomorrow
 python tests/golden.py --url http://localhost:8000          # golden prompts against a running server
 python -m unittest discover -s tests -p "*_test.py"         # smoke + no-mock-values checks (server running)
@@ -98,12 +108,12 @@ Every number in a plan comes from a tool; the language model only chooses and ex
 
 | Part | Weight | How |
 |---|---|---|
-| Distance closeness | 0.5 | `1 − |trail km − requested km| / requested km` |
-| Loop | 0.2 | Start and end within 200 m |
-| Distance from center | 0.2 | Trailhead distance from the requested place, out to 15 km |
-| Elevation preference | 0.1 | For "easy" or "hilly": climb per km compared with 30 m/km. Only when elevation is known |
+| Distance closeness | 0.75 | `1 − |trail km − requested km| / requested km` |
+| Loop | 0.1 | Start and end within 200 m |
+| Distance from center | 0.1 | Trailhead distance from the requested place, out to 15 km |
+| Elevation preference | 0.05 | For "easy" or "hilly": climb per km compared with 30 m/km; a neutral 0.5 when a trail's elevation is unknown |
 
-Parts that can't be computed are left out and the weights renormalized. The top three get real elevation gain and are re-ranked.
+Distance dominates: loop, center and elevation together are worth at most 0.25. A trail whose distance score is more than 1/3 higher, i.e. much closer to the requested distance, therefore always ranks first; a loop bonus can't outweigh it. The top three get real elevation gain and are re-ranked. Gemini may only pick among the top 3, and a pick outside them is replaced by the top-ranked trail.
 
 **2. Plan.** The Gemini planner sees the ranked trails and the prefetched weather, hazards, climate and space weather. It can call any tool, then picks a trail and writes the explanation. Python checks that the chosen trail really came from the trail search.
 
@@ -128,7 +138,8 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 | GIBS: MODIS Terra Corrected Reflectance, true color | NASA | Satellite base-map layer | Yesterday's imagery (local date), map view | https://nasa-gibs.github.io/gibs-api-docs/ |
 | Forecast API | NOAA National Weather Service | Daytime forecast and precipitation chance for the hike day | Hike date, search area | https://www.weather.gov/documentation/services-web-api |
 | OpenStreetMap via Overpass | OpenStreetMap contributors | Trail names and geometry; dark base map tiles | Saved southeast Michigan snapshot (Ypsilanti, 15 km radius; OSM data as of Nov 14, 2026); live Overpass elsewhere in southeast Michigan | https://www.openstreetmap.org/copyright |
-| Elevation API | Open-Meteo (Copernicus DEM) | Elevation gain from up to 100 points along each candidate trail | Per trail | https://open-meteo.com/en/docs/elevation-api |
+| Elevation API | Open-Meteo (Copernicus DEM) | Elevation gain from up to 100 points along each candidate trail | Per trail; cached permanently in `backend/data/elevation_cache.json` | https://open-meteo.com/en/docs/elevation-api |
+| Open-Elevation API | Open-Elevation (SRTM) | Fallback when Open-Meteo fails or is rate-limited; the Trail card names the provider | Per trail | https://open-elevation.com/ |
 | Text to speech | ElevenLabs | Spoken trail guide and turn-back warning | Narration lines per plan | https://elevenlabs.io/docs |
 
 ## Limits
