@@ -189,28 +189,44 @@ function setPref(chip, on) {
   chip.setAttribute("aria-pressed", String(on));
 }
 
+// Form controls the user changed since the last plan loaded. Only these are sent to /plan as
+// explicit fields (which override the text); everything else is left to the request text.
+// Setting .value from code fires no input events, so fillForm() never marks anything.
+const touched = new Set();
+
 function initForm() {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   els.date.value = isoDay(tomorrow);
   updateDistanceOut();
-  els.distance.addEventListener("input", updateDistanceOut);
+  els.distance.addEventListener("input", () => { touched.add("distance_km"); updateDistanceOut(); });
+  for (const [control, field] of [[els.date, "date"], [els.start, "start"]]) {
+    control.addEventListener("input", () => touched.add(field));
+    control.addEventListener("change", () => touched.add(field));
+  }
   els.prefs.addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
-    if (chip) setPref(chip, chip.getAttribute("aria-pressed") !== "true");
+    if (!chip) return;
+    setPref(chip, chip.getAttribute("aria-pressed") !== "true");
+    touched.add("prefs");
   });
 }
 
+/** Explicit form fields for POST /plan: only the controls the user changed since the last plan. */
 function formValues() {
-  const prefs = [...els.prefs.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.pref);
-  const values = { distance_km: Number(els.distance.value), prefs };
-  if (els.date.value) values.date = els.date.value;
-  if (els.start.value) values.start = els.start.value;
+  const values = {};
+  if (touched.has("distance_km")) values.distance_km = Number(els.distance.value);
+  if (touched.has("date") && els.date.value) values.date = els.date.value;
+  if (touched.has("start") && els.start.value) values.start = els.start.value;
+  if (touched.has("prefs")) {
+    values.prefs = [...els.prefs.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.dataset.pref);
+  }
   return values;
 }
 
-/** Fill the form from plan.constraints, ignoring anything malformed. */
+/** Fill the form from plan.constraints, ignoring anything malformed. A loaded plan resets "touched". */
 function fillForm(constraints) {
+  touched.clear();
   els.parsedBy.hidden = true;
   if (!isObj(constraints)) return;
 
