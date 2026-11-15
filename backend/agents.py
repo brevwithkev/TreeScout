@@ -53,6 +53,7 @@ PLANNER_MAX_TURNS = 6
 # No Gemini call (planner turn, checker, revision) starts after this; each is cut off at
 # LLM_CALL_TIMEOUT_S, so the last one ends by about 9 + 10 = 19 s and /plan stays under 20 s.
 LLM_START_DEADLINE_S = 9
+GEMINI_TOP_N = 3  # Gemini may only choose among the top N ranked trails
 PREFETCH_WAIT_S = 3  # prefetched non-trail results the planner sees; slower ones are left to the planner
 
 PLACES = {  # town -> (lat, lon); the rule-based area parser
@@ -390,12 +391,15 @@ Steps:
    first message ("prefetched"). Use them. Call tools only for what is missing or different: another area (get_trails, then
    rank_trails), different constraints (rank_trails), or timing for another trail or start time (compute_timing).
    Put independent calls in the same turn. If the prefetched results answer the request, reply right away.
-4. Answer with JSON only, no prose:
+4. Choose the trail. Matching the requested distance matters most: pick from the top {top_n} of rank_trails, and among
+   them prefer the trail whose distance is closest to the request. A choice outside the top {top_n} is replaced by the
+   top-ranked trail. Do not switch to a shorter trail just to fit a late start time: the safety checker moves the start
+   earlier if needed.
+5. Answer with JSON only, no prose:
 {{"chosen_osm_id": <int or null>, "constraints": {{"distance_km": <number>, "date": "YYYY-MM-DD", "start": "HH:MM", "prefs": [...], "area_lat": <number>, "area_lon": <number>}}, "explanation": "<1-2 sentences>"}}
 
 Rules: every number in the explanation must come from a tool result, never from memory. The explanation must name the chosen
-trail and its distance in km and miles. There is no data about shade or dog rules: never claim a trail is shaded or dog-friendly.
-Prefer a start time that is no later than the latest safe start."""
+trail and its distance in km and miles. There is no data about shade or dog rules: never claim a trail is shaded or dog-friendly."""
 
 CHECKER_PROMPT = """You are the TreeScout safety checker. Review this assembled day-hike plan (all values come from data tools).
 Approve unless the data shows a concrete safety problem: finishing after sunset, a start later than the latest safe start,
@@ -410,7 +414,7 @@ class Planner:
     def __init__(self, ctx):
         self.ctx = ctx
         self.client, self.model, self.types = _gemini()
-        prompt = PLANNER_PROMPT.format(today=ctx.today.isoformat(), weekday=WEEKDAYS[ctx.today.weekday()].title(),
+        prompt = PLANNER_PROMPT.format(top_n=GEMINI_TOP_N, today=ctx.today.isoformat(), weekday=WEEKDAYS[ctx.today.weekday()].title(),
                                        lat=ctx.body_lat, lon=ctx.body_lon, form=json.dumps(ctx.form) or "{}")
         self.chat = self.client.chats.create(model=self.model, config=self.types.GenerateContentConfig(
             system_instruction=prompt, tools=_declarations(self.types), thinking_config=_thinking(self.types, self.model)))
@@ -624,7 +628,10 @@ def _plan(ctx):
     except (KeyError, TypeError, ValueError):
         pass
 
-    outside = not in_coverage(*area) or (parsed_by == "rules" and "unknown_place" in rules)
+    # Outside when the area is outside southeast Michigan, or the rules found a place we don't know and the planner
+    # (rules, or Gemini returning no trail) didn't place the request in our area.
+    gemini_no_trail = parsed_by == "gemini" and (llm_answer or {}).get("chosen_osm_id") is None
+    outside = not in_coverage(*area) or ("unknown_place" in rules and (parsed_by == "rules" or gemini_no_trail))
     if outside:
         where = rules.get("unknown_place") or f"{area[0]:.2f}, {area[1]:.2f}"
         trace.add("planner", "reject", f"{where} is outside our coverage area (southeast Michigan)")
@@ -775,17 +782,22 @@ def _as_int(value):
 
 
 def _choose(ctx, answer, ranked, rejected):
+    """The planner's pick if it is one of the top GEMINI_TOP_N ranked trails (not yet rejected), else the top one."""
     candidates = [t for t in ranked if t["osm_id"] not in rejected] or ranked
     wanted = (answer or {}).get("chosen_osm_id")
     if wanted is not None:
         try:
-            match = next((t for t in candidates if t["osm_id"] == int(wanted)), None)
+            position = next((i for i, t in enumerate(candidates) if t["osm_id"] == int(wanted)), None)
         except (TypeError, ValueError):
-            match = None
-        if match:
-            return match
-        ctx.trace.add("planner", "reject", f"Planner picked osm_id {wanted}, which is not an available get_trails "
-                                           f"result; using top-ranked {candidates[0]['name']}")
+            position = None
+        if position is None:
+            ctx.trace.add("planner", "reject", f"Planner picked osm_id {wanted}, which is not an available get_trails "
+                                               f"result; using top-ranked {candidates[0]['name']}")
+        elif position >= GEMINI_TOP_N:
+            ctx.trace.add("planner", "reject", f"Gemini picked {candidates[position]['name']} (ranked #{position + 1}), "
+                                               f"outside the top {GEMINI_TOP_N}; using top-ranked {candidates[0]['name']}")
+        else:
+            return candidates[position]
     return candidates[0]
 
 

@@ -157,6 +157,59 @@ class TimeBudgetTests(unittest.TestCase):
         self.assertEqual(fake.calls["planner"], 0)
 
 
+FIVE_TRAILS = [  # same loop geometry, so ranking is decided by distance: top 3 are ids 1, 2, 3
+    {"name": f"Trail {i}", "osm_id": i, "distance_km": km, "coords": COORDS}
+    for i, km in ((1, 2.0), (2, 2.2), (3, 2.5), (4, 6.0), (5, 9.0))
+]
+
+
+class GuardAndCoverageTests(unittest.TestCase):
+    setUp = FailFastTests.setUp
+
+    def plan_with(self, text, answer):
+        from google.genai import types
+        fake = FakeGemini(lambda: FakeReply(json.dumps(answer)),
+                          checker=lambda: FakeReply('{"approved": true, "problems": []}'))
+        with patch("backend.agents._safe_trails", lambda lat, lon, r: {"source": "OSM", "items": FIVE_TRAILS,
+                                                                       "checked_at": "t"}), \
+                patch("backend.agents._gemini", lambda: (fake, "gemini-test-flash", types)):
+            return agents.make_plan(text, 42.0, -83.0)
+
+    def test_pick_outside_top_3_is_replaced_by_top_ranked(self):
+        result = self.plan_with("2 km walk near Ypsilanti tomorrow",
+                                {"chosen_osm_id": 5, "explanation": "Trail 5 is 9.0 km (5.6 mi)."})
+        self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+        self.assertEqual(result["trail"]["name"], "Trail 1")
+        self.assertIn("Gemini picked Trail 5 (ranked #5), outside the top 3; using top-ranked Trail 1",
+                      [e["summary"] for e in result["agent_trace"]])
+
+    def test_pick_inside_top_3_is_kept(self):
+        result = self.plan_with("2 km walk near Ypsilanti tomorrow",
+                                {"chosen_osm_id": 2, "explanation": "Trail 2 is 2.2 km (1.4 mi)."})
+        self.assertEqual(result["trail"]["name"], "Trail 2")
+        self.assertFalse([e for e in result["agent_trace"] if "outside the top" in e["summary"]])
+
+    def test_prompt_says_distance_matters_most(self):
+        prompt = agents.PLANNER_PROMPT.format(top_n=agents.GEMINI_TOP_N, today="2026-11-15", weekday="Sunday",
+                                              lat=42.0, lon=-83.0, form="{}")
+        self.assertIn("Matching the requested distance matters most: pick from the top 3 of rank_trails", prompt)
+        self.assertNotIn("Prefer a start time", prompt)
+
+    def test_gemini_no_trail_for_unknown_place_is_outside_coverage(self):
+        result = self.plan_with("A hike in Antarctica tomorrow",
+                                {"chosen_osm_id": None, "constraints": {"distance_km": 8}, "explanation": "Out of area."})
+        self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+        self.assertIsNone(result["trail"])
+        self.assertEqual(result["warnings"], ["Outside our coverage area (southeast Michigan)"])
+        self.assertIn("Antarctica is outside our coverage area (southeast Michigan)",
+                      [e["summary"] for e in result["agent_trace"]])
+
+    def test_gemini_no_trail_for_known_place_still_plans(self):
+        result = self.plan_with("2 km walk near Ypsilanti tomorrow", {"chosen_osm_id": None, "explanation": "?"})
+        self.assertEqual(result["trail"]["name"], "Trail 1")
+        self.assertNotIn("Outside our coverage area (southeast Michigan)", result["warnings"])
+
+
 class StartMovedTests(unittest.TestCase):
     def setUp(self):
         for name, fake in FAKE_TOOLS.items():
