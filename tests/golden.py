@@ -30,7 +30,7 @@ FAR_WARNING = "No trail near"
 EXPECTED_WARNINGS = [
     (("4 miles", "3:30 pm"), r"sunset", "a sunset-related warning"),
     (("10 miles", "2 pm"), rf"^{FAR_WARNING} ", f"a '{FAR_WARNING} ...' distance warning"),
-    (("antarctica",), r"^(No mapped trails found near|Trail data unavailable)", "a 'no mapped trails' warning"),
+    (("antarctica",), r"^(No mapped trails found near|Trail data for .+ is unavailable)", "a 'no mapped trails' warning"),
 ]
 SECTIONS_WITH_SOURCE = ("weather", "climate", "space_weather")
 

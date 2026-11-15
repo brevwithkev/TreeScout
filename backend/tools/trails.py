@@ -2,6 +2,7 @@
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
+from datetime import datetime, timezone
 from math import asin, cos, degrees, isfinite, radians, sin, sqrt
 from threading import Lock
 from time import monotonic, time
@@ -24,6 +25,8 @@ USER_AGENT = "TrekChek hackathon (contact: trekchek-team)"  # the example.com pl
 ROOT = Path(__file__).resolve().parents[2]
 DISK_CACHE_DIR = ROOT / "data" / "overpass_cache"
 SNAPSHOT_DIR = ROOT / "data" / "trail_snapshots"  # anywhere: one successful lookup per place, kept forever
+SEED_DIR = ROOT / "backend" / "data" / "trail_snapshots"  # committed snapshots (real Overpass answers)
+SEED_MATCH_KM = 10  # a seeded snapshot serves any point within this distance of its center
 YPSILANTI_FIXTURE = ROOT / "tests" / "fixtures" / "overpass_ypsilanti.json"
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
@@ -281,10 +284,27 @@ def _snapshot_path(lat, lon):
     return SNAPSHOT_DIR / f"{lat:.3f}_{lon:.3f}.json"
 
 
-def get_trails_anywhere(lat, lon):
-    """(trails, radius_km) for any place outside the Ypsilanti path (get_trails).
+def _seed_for(lat, lon):
+    """The nearest committed snapshot within SEED_MATCH_KM: (data, distance_km), or (None, None)."""
+    best = (None, None)
+    for path in sorted(SEED_DIR.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            distance = haversine([lat, lon], [data["lat"], data["lon"]])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Unreadable seeded snapshot %s: %s", path.name, exc)
+            continue
+        if distance <= SEED_MATCH_KM and (best[1] is None or distance < best[1]):
+            best = (data, distance)
+    return best
 
-    A saved snapshot for the point (~100 m) is used first, forever. Otherwise live Overpass (the same mirrors,
+
+def get_trails_anywhere(lat, lon):
+    """(trails, radius_km, snapshot) for any place outside the Ypsilanti path (get_trails). snapshot is None for a
+    live answer, else {"kind": "saved" | "seeded", "name", "saved_at"} (shown in the trace).
+
+    A saved snapshot for the point (~100 m) is used first, forever; then a committed seed within SEED_MATCH_KM
+    (backend/data/trail_snapshots/). Otherwise live Overpass (the same mirrors,
     OVERPASS_BUDGET_SECONDS for everything): 10 km, widened once to 20 km if that finds fewer than MIN_TRAILS.
     A completed search is saved, even with no trails, so a place needs one successful lookup. Raises
     OverpassError when Overpass does not answer and there is no snapshot.
@@ -296,14 +316,23 @@ def get_trails_anywhere(lat, lon):
     memo = ("anywhere", round(lat, 3), round(lon, 3))
     with _lock:
         if memo in _cache and monotonic() - _cache[memo][0] < CACHE_TTL_SECONDS:
-            trails, radius = _cache[memo][1]
-            return deepcopy(trails), radius
+            trails, radius, snapshot = _cache[memo][1]
+            return deepcopy(trails), radius, deepcopy(snapshot)
+        trails, snapshot = None, None
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
             trails, radius = _parse_anywhere(saved["payload"]), saved["radius_km"]
+            snapshot = {"kind": "saved", "name": saved.get("name"), "saved_at": saved.get("saved_at")}
             logger.info("Using saved trail snapshot %s (%g km)", path.name, radius)
         except (OSError, ValueError, KeyError, TypeError):
             trails = None
+        if trails is None:
+            seed, distance = _seed_for(lat, lon)
+            if seed is not None:
+                trails, radius = _parse_anywhere(seed["payload"]), seed["radius_km"]
+                snapshot = {"kind": "seeded", "name": seed.get("name"), "saved_at": seed.get("saved_at"),
+                            "distance_km": round(distance, 1)}
+                logger.info("Using seeded trail snapshot %s (%.1f km away)", seed.get("name"), distance)
         if trails is None:
             deadline, failures, best, complete = monotonic() + OVERPASS_BUDGET_SECONDS, [], None, False
             for radius in ANYWHERE_RADII_KM:
@@ -324,8 +353,10 @@ def get_trails_anywhere(lat, lon):
                                     "is no saved snapshot for this place. " + "; ".join(failures))
             payload, trails, radius = best
             if complete:  # a 10 km answer whose 20 km retry failed is used but not saved
-                _save_json(path, {"lat": lat, "lon": lon, "radius_km": radius, "payload": payload})
+                saved_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                _save_json(path, {"lat": lat, "lon": lon, "radius_km": radius, "saved_at": saved_at,
+                                  "payload": payload})
         if len(_cache) >= 128:
             del _cache[next(iter(_cache))]
-        _cache[memo] = (monotonic(), (trails, radius))
-        return deepcopy(trails), radius
+        _cache[memo] = (monotonic(), (trails, radius, snapshot))
+        return deepcopy(trails), radius, deepcopy(snapshot)

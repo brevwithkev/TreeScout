@@ -52,7 +52,7 @@ MAX_ROUNDS = 2
 NOT_FOUND = "Couldn't find {place}"
 LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
 NO_TRAILS = "No mapped trails found near {place}"
-TRAILS_DOWN = "Trail data unavailable right now; try again"
+TRAILS_DOWN = "Trail data for {place} is unavailable right now; try again"
 
 LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it rejects anything under 10 s
 LLM_CALL_TIMEOUT_S = 10       # we stop waiting after this and fall back (fail fast on an overloaded model)
@@ -81,11 +81,6 @@ NOT_PLACES = set(WEEKDAYS) | {"january", "february", "march", "april", "may", "j
 def local_place(name):
     """(lat, lon) when the place's first part ("Ypsilanti" in "Ypsilanti, MI") is in PLACES, else None."""
     return PLACES.get(str(name or "").split(",")[0].strip().lower())
-
-
-def same_place(a, b):
-    first = lambda s: str(s or "").split(",")[0].strip().lower()  # noqa: E731
-    return bool(a) and bool(b) and first(a) == first(b)
 
 
 def _mi(km):
@@ -123,6 +118,11 @@ def _summarize(name, result, args, label=None):
         return f"{result.get('source')} unavailable: {result.get('error')}"
     if name == "get_trails":
         cached = " (saved copy)" if any(t.get("cached") for t in result["items"]) else ""
+        snap = result.get("snapshot")
+        if snap:
+            when = f", OSM data from {str(snap['saved_at'])[:10]}" if snap.get("saved_at") else ""
+            what = f"seeded snapshot of {snap['name']}" if snap["kind"] == "seeded" else "saved snapshot"
+            cached = f" (from the {what}{when}; Overpass not queried)"
         radius = result.get("radius_km", args[2] if len(args) > 2 else 0)
         return f"Found {len(result['items'])} named trails within {radius:g} km{cached}"
     if name == "rank_trails":
@@ -181,8 +181,11 @@ def _safe_trails_anywhere(lat, lon):
     """Trails near a geocoded place: saved snapshot, else live Overpass at 10 km (20 km if under 3 trails)."""
     source = "OpenStreetMap (Overpass)"
     try:
-        items, radius = get_trails_anywhere(lat, lon)
-        return {"source": source, "items": items, "radius_km": radius, "checked_at": now_iso()}
+        items, radius, snapshot = get_trails_anywhere(lat, lon)
+        out = {"source": source, "items": items, "radius_km": radius, "checked_at": now_iso()}
+        if snapshot:
+            out["snapshot"] = snapshot
+        return out
     except Exception as exc:  # noqa: BLE001 - OverpassError, ValueError
         return unavailable(source, str(exc))
 
@@ -285,7 +288,8 @@ def parse_request(text, today):
             out["area_name"], out["area_lat"], out["area_lon"] = place.title(), lat, lon
             break
     else:
-        named = re.search(r"\b(?:in|near|around|at|to)\s+([A-Z][A-Za-z.'-]+(?:,?\s+[A-Z][A-Za-z.'-]+)*)", text)
+        named = re.search(r"\b(?:in|near|around|at|to)\s+(?:the\s+)?([A-Z][A-Za-z.'-]+(?:,?\s+[A-Z][A-Za-z.'-]+)*)",
+                          text)
         words = named.group(1).split() if named else []
         while words and words[-1].strip(",").lower() in NOT_PLACES:  # "near Banff Saturday" -> "Banff"
             words.pop()
@@ -344,6 +348,10 @@ def merge_constraints(form, llm, rules, today):
 
 class LLMUnavailable(Exception):
     pass
+
+
+def gemini_configured():
+    return bool(os.environ.get("GEMINI_API_KEY", "").strip() and os.environ.get("GEMINI_MODEL", "").strip())
 
 
 def _gemini():
@@ -527,7 +535,8 @@ class PlanContext:
         self.llm_down = None  # reason string once any Gemini call failed; no more Gemini calls after that
         self.user_osm_id = None  # trail the user chose from "Other options" (no Gemini calls then)
         self.anywhere = set()  # rounded (lat, lon) of geocoded places: their trails use get_trails_anywhere
-        self.area = (body_lat, body_lon)  # where the Gemini tools without a place look (the last get_trails place)
+        self.area = None      # the resolved place's (lat, lon); the Gemini tools without a place look here
+        self.resolved = None  # the last place name that resolved: {"lat", "lon", "name"}; never replaced by the default
 
     def elapsed(self):
         return perf_counter() - self.started
@@ -541,7 +550,8 @@ class PlanContext:
             return None
         here = local_place(name)
         if here:
-            return {"lat": here[0], "lon": here[1], "name": name}
+            self.resolved = {"lat": here[0], "lon": here[1], "name": name}
+            return dict(self.resolved)
         found = self.tools.call("geocode", geocode, name)
         if _failed(found):
             return {"error": LOOKUP_DOWN.format(place=name), "name": name}
@@ -549,7 +559,12 @@ class PlanContext:
             return {"error": NOT_FOUND.format(place=name), "name": name}
         lat, lon = round(found["lat"], 4), round(found["lon"], 4)
         self.anywhere.add((lat, lon))
-        return {"lat": lat, "lon": lon, "name": name}
+        self.resolved = {"lat": lat, "lon": lon, "name": name}
+        return dict(self.resolved)
+
+    def here(self):
+        """Where location tools run: the resolved place, else (no place named) the request's own lat/lon."""
+        return self.area or (self.body_lat, self.body_lon)
 
     def trails_future(self, lat, lon):
         lat, lon = round(lat, 4), round(lon, 4)
@@ -607,11 +622,11 @@ class PlanContext:
                 return _Later(lambda: {"error": found["error"]})
             if found is not None:
                 self.area = (found["lat"], found["lon"])
-            return self.trails_future(*self.area)
-        lat, lon = self.area
+            return self.trails_future(*self.here())
+        lat, lon = self.here()
         if name == "rank_trails":
             constraints = {"distance_km": num("distance_km"), "prefs": [p for p in a.get("prefs") or [] if p in PREFS]}
-            center = self.area
+            center = self.here()
             return _Later(lambda: self.rank(list(self.trails_by_id.values()), constraints, *center))
         if name == "get_weather":
             return self.tools.submit("get_weather", get_weather, round(lat, 4), round(lon, 4), str(a.get("date")))
@@ -642,7 +657,7 @@ class PlanContext:
             return result
         if name == "get_trails":
             self.trails_by_id.update({t["osm_id"]: t for t in result["items"]})
-            center = list(self.area)
+            center = list(self.here())
             items = sorted(result["items"], key=lambda t: haversine(center, t["coords"][0]))[:30]
             return {"count": len(result["items"]), "trails": [
                 {"osm_id": t["osm_id"], "name": t["name"], "distance_km": t["distance_km"],
@@ -699,18 +714,22 @@ def make_plan(text, lat, lon, radius_km=SEARCH_RADIUS_KM, form=None, osm_id=None
 def _plan(ctx):
     rules, trace, today = ctx.rules, ctx.trace, ctx.today
     rules_constraints = merge_constraints(ctx.form, None, rules, today)
-    # Where: a home-area town (PLACES), a place name looked up with Nominatim, or the request's own lat/lon.
-    place, area_error = rules.get("area_name") or rules.get("unknown_place"), None
-    if "area_lat" in rules:
-        rules_area = (rules["area_lat"], rules["area_lon"])
-    elif "unknown_place" in rules:
-        found = ctx.resolve(rules["unknown_place"])
-        rules_area = None if "error" in found else (found["lat"], found["lon"])
-        area_error = found.get("error")
+    # WHERE comes first, before any location tool: a home-area town (PLACES) or a place name the rules found
+    # (Nominatim). The request's own lat/lon is used only when no place is named at all; when the rules find no
+    # name but Gemini will run, nothing location-based runs until Gemini names the place (or says there is none).
+    # Once a place resolves (ctx.resolved) it is never replaced by the default, even if Gemini fails or times out.
+    named = rules.get("area_name") or rules.get("unknown_place")
+    area_error = None
+    found = ctx.resolve(named) if named else None
+    if found and "error" in found:
+        area_error = found["error"]
+    if ctx.resolved is not None:
+        rules_area = (ctx.resolved["lat"], ctx.resolved["lon"])
+    elif named or (ctx.user_osm_id is None and gemini_configured()):
+        rules_area = None  # a name that didn't resolve, or Gemini may still name the place
     else:
-        rules_area = (ctx.body_lat, ctx.body_lon)
-    if rules_area is not None:
-        ctx.area = rules_area
+        rules_area = (ctx.body_lat, ctx.body_lon)  # the request names no place
+    ctx.area = rules_area
 
     # Prefetch independent tools while the LLM thinks (identical LLM calls reuse these results).
     if rules_area is not None:
@@ -742,12 +761,26 @@ def _plan(ctx):
     constraints = merge_constraints(ctx.form, llm_constraints, rules, today)
     # True when the hiker asked for a distance (form, text via Gemini, or text via rules), not the default.
     distance_given = any(_valid_km(src.get("distance_km")) for src in (ctx.form, llm_constraints, rules))
-    area = rules_area
     llm_place = clean_place(llm_constraints.get("place")) if parsed_by == "gemini" else None
-    if llm_place and llm_place.lower() not in ("null", "none") and not same_place(llm_place, place):
+    if llm_place and llm_place.lower() in ("null", "none"):
+        llm_place = None
+    if llm_place and not (ctx.resolved and llm_place.lower() == ctx.resolved["name"].lower()):
+        before = ctx.resolved
         found = ctx.resolve(llm_place)  # Gemini gives a name only; TrekChek looks it up
-        place = llm_place
-        area, area_error = (None, found["error"]) if "error" in found else ((found["lat"], found["lon"]), None)
+        if "error" in found:
+            if before is not None:  # keep the place that did resolve
+                ctx.resolved = before
+                trace.add("planner", "decide", f"{found['error']}; keeping {before['name']}")
+            else:
+                area_error = found["error"]
+    if ctx.resolved is not None:      # a named place: never the default
+        area, place = (ctx.resolved["lat"], ctx.resolved["lon"]), ctx.resolved["name"]
+    elif named or llm_place:          # a place was named but could not be found: no plan
+        area, place = None, named or llm_place
+        area_error = area_error or NOT_FOUND.format(place=place)
+    else:                             # no place named at all: the request's own lat/lon
+        area, place = (ctx.body_lat, ctx.body_lon), None
+    ctx.area = area
 
     if area is None:  # the place name was not found (or the lookup is down): no plan
         trace.add("planner", "reject", area_error)
@@ -756,7 +789,8 @@ def _plan(ctx):
 
     trails = ctx.trails(*area)
     if _failed(trails) or not trails["items"]:
-        message = TRAILS_DOWN if _failed(trails) else NO_TRAILS.format(place=place or "this location")
+        where = place or "this area"
+        message = TRAILS_DOWN.format(place=where) if _failed(trails) else NO_TRAILS.format(place=where)
         trace.add("planner", "reject", message if not _failed(trails) else f"{message} ({trails.get('error')})")
         # Sections that don't depend on a trail still report their own results.
         here = (round(area[0], 4), round(area[1], 4))
@@ -866,7 +900,8 @@ def _prefetch_context(ctx, area, constraints, space):
     out = {"guessed_place": ctx.rules.get("area_name") or ctx.rules.get("unknown_place"),
            "guessed_constraints": constraints}
     if area is None:
-        out["get_trails"] = {"error": "TrekChek could not find the place in the request"}
+        out["get_trails"] = {"note": "No place resolved yet. Call get_trails with the place NAME from the request "
+                                     "(an empty place only if the request names none)."}
     if area is not None:
         trails = ctx.trails(*area)
         if _failed(trails):

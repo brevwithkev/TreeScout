@@ -47,7 +47,7 @@ class PlanHasNoMockValues(unittest.TestCase):
         _, text = post_plan({"request": "A hike in Antarctica tomorrow"})
         plan = json.loads(text)
         self.assertIsNone(plan["trail"])
-        self.assertTrue(any(w.startswith(("No mapped trails found near", "Trail data unavailable"))
+        self.assertTrue(any((w.startswith("No mapped trails found near") or (w.startswith("Trail data for ") and "unavailable" in w))
                             for w in plan["warnings"]), plan["warnings"])
 
 

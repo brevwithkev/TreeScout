@@ -208,10 +208,11 @@ class AnywhereTests(unittest.TestCase):
         self.assertIsNotNone(result["trail"])
 
     def test_overpass_down_without_a_snapshot(self):
-        with Offline(overpass=None, nominatim=NOMINATIM):
-            result = plan("Easy 6 km hike near Banff, Alberta tomorrow")
+        with Offline(overpass=None, nominatim=NOMINATIM):   # the South Rim cliff is far from any seeded snapshot
+            result = plan("5 km hike near Grand Canyon South Rim tomorrow")
         self.assertIsNone(result["trail"])
-        self.assertEqual(result["warnings"], ["Trail data unavailable right now; try again"])
+        self.assertEqual(result["warnings"],
+                         ["Trail data for Grand Canyon South Rim is unavailable right now; try again"])
 
     def test_place_not_found(self):
         with Offline(overpass=saved_overpass(), nominatim=NOMINATIM) as off:
@@ -378,15 +379,15 @@ class GeocodeQualityTests(unittest.TestCase):
             result = self.gemini_plan("An 8 km hike at the Grand Canyon tomorrow",
                                       "Grand Canyon Village, Arizona, USA")
             self.assertEqual(result["constraints"]["parsed_by"], "gemini")
-            self.assertEqual(off.places, ["Grand Canyon Village, Arizona, USA"])
+            self.assertEqual(off.places, ["Grand Canyon", "Grand Canyon Village, Arizona, USA"])  # rules, then Gemini
             self.assertIn("Nominatim: Grand Canyon Village, Arizona, USA -> 36.0545, -112.1406 "
                           "(Grand Canyon Village, Coconino County, Arizona, United States)", summaries(result))
             self.assertLess(trails.haversine(result["trail"]["coords"][0], GC_VILLAGE), 10)
-            found, _radius = trails.get_trails_anywhere(*GC_VILLAGE)       # the saved snapshot, no network
+            found, _radius, snapshot = trails.get_trails_anywhere(*GC_VILLAGE)
         names = {t["name"] for t in found}
         self.assertTrue(any(f in n for n in names for f in GC_FAMOUS), sorted(names))
-        village_box = ",".join(map(str, trails._bbox(*GC_VILLAGE, 10)))
-        self.assertEqual(sum(f"({village_box});" in q for q in off.queries), 1)  # then the saved snapshot
+        self.assertEqual(snapshot["kind"], "seeded")
+        self.assertEqual(off.queries, [])  # the committed seed answers before live Overpass
 
     def test_grand_canyon_without_gemini(self):
         # The rules pass the name as written; Nominatim returns only natural features for "Grand Canyon", so the
@@ -395,7 +396,7 @@ class GeocodeQualityTests(unittest.TestCase):
             result = plan("8 km hike near Grand Canyon tomorrow")
             self.assertLess(trails.haversine(result["trail"]["coords"][0], GC_VILLAGE), 15)
             hit = geocode.pick_best(GC_NOMINATIM["Grand Canyon"])
-            found, _radius = trails.get_trails_anywhere(round(float(hit["lat"]), 4), round(float(hit["lon"]), 4))
+            found, _radius, _snap = trails.get_trails_anywhere(round(float(hit["lat"]), 4), round(float(hit["lon"]), 4))
         self.assertLess(trails.haversine((float(hit["lat"]), float(hit["lon"])), GC_VILLAGE), 8)
         self.assertTrue(any(f in t["name"] for t in found for f in GC_FAMOUS))
 
@@ -436,6 +437,113 @@ class TzdataTests(unittest.TestCase):
         utc = sunset(Observer(latitude=lat, longitude=lon), date=date.fromisoformat(DATE), tzinfo=timezone.utc)
         self.assertEqual(result["timing"]["sunset"], (utc - timedelta(hours=6)).strftime("%H:%M"))
         self.assertEqual(utc.strftime("%H"), "23")   # about 23:47 UTC: 16:47 by the sun's clock, 17:47 at UTC-6
+
+
+# Hand-written Nominatim answer (the shape of a real one) for a place with no seeded snapshot.
+MOAB = [{"place_id": 1, "lat": "38.5732", "lon": "-109.5498", "class": "place", "type": "city", "addresstype": "city",
+         "display_name": "Moab, Grand County, Utah, United States", "importance": 0.5}]
+# Anything from the default (Ypsilanti) location or Michigan that must never appear for a place elsewhere.
+HOME_LEAKS = ("Ypsilanti", "Michigan", "Rolling Hills", "Yellow Trail", "deer", "Deer", "America/Detroit")
+
+
+def no_home_data(test, result):
+    text = json.dumps(result)
+    for leak in HOME_LEAKS:
+        test.assertNotIn(leak, text)
+    for lat, lon in [p for s in ("trail",) if result.get(s) for p in result[s].get("coords", [])]:
+        test.assertGreater(trails.haversine([lat, lon], [42.2411, -83.6130]), 100)
+
+
+class FakeCall:
+    def __init__(self, name, args):
+        self.name, self.args, self.id = name, args, f"call-{name}"
+
+
+class ResolvedPlaceIsKeptTests(unittest.TestCase):
+    """Regression: a named place whose trails time out must never fall back to the default Ypsilanti location."""
+
+    def gemini_then_failure(self, text, place):
+        """Gemini calls get_trails(place), then its next turn fails (as when Overpass made it miss the deadline)."""
+        from google.genai import types
+        from backend.test_agents import FakeAPIError, FakeGemini
+
+        class Reply:
+            text, function_calls = "", [FakeCall("get_trails", {"place": place})]
+        turns = iter([lambda: Reply(), lambda: (_ for _ in ()).throw(FakeAPIError(503, "UNAVAILABLE"))])
+        fake = FakeGemini(lambda: next(turns)())
+        with patch("backend.agents._gemini", lambda: (fake, "gemini-test-flash", types)), \
+                patch("backend.agents.gemini_configured", lambda: True):
+            return agents.make_plan(text, 42.2411, -83.6130, form={"date": DATE})
+
+    def assert_unavailable_for(self, result, place):
+        self.assertIsNone(result["trail"])
+        self.assertEqual(result["warnings"][0], f"Trail data for {place} is unavailable right now; try again")
+        self.assertFalse(result["checker"]["approved"])
+        self.assertEqual(result["narration"], [])
+        no_home_data(self, result)
+
+    def test_overpass_timeout_after_gemini_resolved_the_place(self):
+        with Offline(overpass=None, nominatim={"Moab, Utah, USA": MOAB}) as off:
+            result = self.gemini_then_failure("I want to take a hike at the canyon tomorrow", "Moab, Utah, USA")
+        self.assertEqual(result["constraints"]["parsed_by"], "rules")              # Gemini failed: rules fallback
+        self.assertIn("LLM unavailable, used rule-based planner", summaries(result))
+        self.assertEqual(off.places, ["Moab, Utah, USA"])
+        self.assert_unavailable_for(result, "Moab, Utah, USA")
+        self.assertTrue(all("(42." not in q for q in off.queries))               # no Overpass query for Ypsilanti
+
+    def test_overpass_timeout_for_a_place_the_rules_found(self):
+        with Offline(overpass=None, nominatim={"Moab, Utah": MOAB}) as off:
+            result = plan("I want to take a hike at Moab, Utah tomorrow")
+        self.assertEqual(off.places, ["Moab, Utah"])
+        self.assert_unavailable_for(result, "Moab, Utah")
+
+    def test_nothing_location_based_runs_before_gemini_names_the_place(self):
+        with Offline(overpass=None, nominatim={"Moab, Utah, USA": MOAB}) as off:
+            result = self.gemini_then_failure("I want to take a hike at the canyon tomorrow", "Moab, Utah, USA")
+        tools = [e.get("tool") for e in result["agent_trace"] if e.get("tool")]
+        first_location_tool = next(i for i, t in enumerate(tools) if t not in ("get_space_weather",))
+        self.assertEqual(tools[first_location_tool], "geocode")
+        self.assertEqual(len(off.queries), 1)
+
+    def test_no_place_named_still_uses_the_request_location(self):
+        with Offline(overpass=None, nominatim={}):
+            result = plan("A 5 km walk tomorrow")
+        self.assertEqual(result["trail"]["name"], "Yellow Trail (Central Loop)")  # the committed Ypsilanti fixture
+
+
+class SeededSnapshotTests(unittest.TestCase):
+    def test_grand_canyon_with_overpass_down_uses_the_seeded_snapshot(self):
+        with Offline(overpass=None, nominatim=GC_NOMINATIM) as off:
+            result = plan("I want to take a hike at the Grand Canyon tomorrow")
+        self.assertEqual(off.places, ["Grand Canyon"])
+        self.assertEqual(off.queries, [])                                          # Overpass never asked
+        self.assertTrue(any("seeded snapshot of Grand Canyon Village, Arizona, USA, OSM data from 2026-11-15" in s
+                            for s in summaries(result)), summaries(result))
+        names = [result["trail"]["name"]] + [a["name"] for a in result["alternatives"]]
+        self.assertTrue(any(f in n for n in names for f in GC_FAMOUS), names)
+        lat, lon = result["trail"]["coords"][0]
+        self.assertEqual(result["timing"]["sunset"], local_sunset(lat, lon, "America/Phoenix").strftime("%H:%M"))
+        self.assertEqual(str(common.timezone_for(lat, lon)), "America/Phoenix")
+        no_home_data(self, result)
+
+    def test_gemini_village_name_uses_the_seed_too(self):
+        with Offline(overpass=None, nominatim=GC_NOMINATIM):
+            result = GeocodeQualityTests.gemini_plan(None, "An 8 km hike at the Grand Canyon tomorrow",
+                                                     "Grand Canyon Village, Arizona, USA")
+        self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+        self.assertIsNotNone(result["trail"])
+        self.assertLess(trails.haversine(result["trail"]["coords"][0], GC_VILLAGE), 10)
+        no_home_data(self, result)
+
+    def test_banff_seed_and_seed_files(self):
+        found, radius, snapshot = trails.get_trails_anywhere(51.1751, -115.5721)
+        self.assertEqual((radius, snapshot["kind"], snapshot["name"]), (10, "seeded", "Banff, Alberta, Canada"))
+        self.assertGreaterEqual(len(found), 10)
+        far, _ = trails._seed_for(36.0255, -113.8321)   # Grand Canyon South Rim cliff: 180 km from the village seed
+        self.assertIsNone(far)
+        for path in trails.SEED_DIR.glob("*.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(set(data) >= {"name", "lat", "lon", "radius_km", "saved_at", "payload"}, True, path)
 
 
 class YpsilantiUnchangedTests(unittest.TestCase):
