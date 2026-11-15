@@ -19,30 +19,89 @@
       <aside class="panel" aria-label="Plan a hike">
         <header class="panel-head">
           <p class="eyebrow">Explore with context</p>
-          <h1 class="brand">Tree<span>Scout</span></h1>
+          <div class="brand-row">
+            <h1 class="brand">Tree<span>Scout</span></h1>
+            <div id="mode-badges" class="badges" aria-label="Data mode"></div>
+          </div>
           <p id="status" class="status" role="status">Checking backend…</p>
         </header>
 
-        <form id="plan-form" class="plan-form">
-          <label for="request" class="label">Hike request</label>
-          <textarea id="request" name="request" rows="4" required
-                    placeholder="e.g. 5 mile shaded hike near Ann Arbor tomorrow">5 mile shaded hike near Ann Arbor tomorrow</textarea>
+        <div class="tabs" role="tablist" aria-label="Panel sections">
+          <button type="button" class="tab" role="tab" id="tab-plan" aria-controls="panel-plan" aria-selected="true">Plan</button>
+          <button type="button" class="tab" role="tab" id="tab-hazards" aria-controls="panel-hazards" aria-selected="false" tabindex="-1">Hazards <span id="hazard-count" class="tab-count"></span></button>
+          <button type="button" class="tab" role="tab" id="tab-sources" aria-controls="panel-sources" aria-selected="false" tabindex="-1">Sources</button>
+        </div>
 
-          <label class="check">
-            <input type="checkbox" id="use-mock" checked>
-            <span>Use mock data</span>
-          </label>
+        <div class="panel-body">
+          <section id="panel-plan" class="tab-panel" role="tabpanel" aria-labelledby="tab-plan">
+            <form id="plan-form" class="plan-form" novalidate>
+              <label for="request" class="label">Hike request</label>
+              <textarea id="request" name="request" rows="3" required
+                        placeholder="e.g. 5 mile shaded hike near Ann Arbor tomorrow">5 mile shaded hike near Ann Arbor tomorrow</textarea>
 
-          <button type="submit" id="plan-btn" class="btn btn--primary">Plan</button>
-        </form>
+              <div class="field">
+                <div class="field-row">
+                  <label for="distance" class="label">Distance</label>
+                  <output id="distance-out" for="distance" class="mono"></output>
+                </div>
+                <input type="range" id="distance" name="distance_km" min="1" max="20" step="0.5" value="8">
+              </div>
 
-        <section id="info" class="info" aria-live="polite" aria-busy="false">
-          <p class="info-empty">Describe a hike and press Plan.</p>
-        </section>
+              <div class="field-grid">
+                <div class="field">
+                  <label for="date" class="label">Date</label>
+                  <input type="date" id="date" name="date">
+                </div>
+                <div class="field">
+                  <label for="start" class="label">Start time</label>
+                  <input type="time" id="start" name="start" value="10:00">
+                </div>
+              </div>
+
+              <fieldset class="field chips-field">
+                <legend class="label">Preferences</legend>
+                <div id="prefs" class="chips">
+                  <button type="button" class="chip" data-pref="easy" aria-pressed="false">easy</button>
+                  <button type="button" class="chip" data-pref="hilly" aria-pressed="false">hilly</button>
+                  <button type="button" class="chip" data-pref="shaded" aria-pressed="false">shaded</button>
+                  <button type="button" class="chip" data-pref="dog-friendly" aria-pressed="false">dog-friendly</button>
+                </div>
+              </fieldset>
+
+              <div class="form-foot">
+                <label class="check">
+                  <input type="checkbox" id="use-mock" checked>
+                  <span>Use mock data</span>
+                </label>
+                <p id="parsed-by" class="parsed-by" hidden></p>
+              </div>
+
+              <button type="submit" id="plan-btn" class="btn btn--primary">Plan</button>
+            </form>
+
+            <section id="results" class="results" aria-live="polite" aria-busy="false">
+              <p class="info-empty">Describe a hike and press Plan.</p>
+            </section>
+          </section>
+
+          <section id="panel-hazards" class="tab-panel" role="tabpanel" aria-labelledby="tab-hazards" hidden>
+            <div id="hazards-body"><p class="info-empty">Plan a hike to check for nearby NASA EONET events.</p></div>
+          </section>
+
+          <section id="panel-sources" class="tab-panel" role="tabpanel" aria-labelledby="tab-sources" hidden>
+            <div id="sources-body"><p class="info-empty">Plan a hike to see which data sources answered.</p></div>
+          </section>
+        </div>
+
+        <footer class="panel-foot">
+          Supported by the Michigan Space Grant Consortium, NASA grant 80NSSC20M0124.
+          Data: NASA EONET, NASA POWER, NASA DONKI, NASA GIBS/MODIS, NWS, © OpenStreetMap contributors.
+        </footer>
       </aside>
 
       <div class="map-wrap">
         <div id="map" role="region" aria-label="Trail map"></div>
+        <p id="gibs-label" class="map-label" hidden></p>
       </div>
     </div>
   </body>
