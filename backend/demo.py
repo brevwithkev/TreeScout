@@ -96,12 +96,13 @@ def demo_audio(text):
 
 
 def plan_voice_lines(plan):
-    """Every line the frontend may speak for this plan: narration, the turn-back cue, the turn-back text."""
-    from backend.narration import TURN_BACK_CUE, turn_back_text  # local import: narration has no demo deps
+    """Every line the frontend may speak for this plan: narration, the fixed cues ("Turn back now.",
+    "You're back on schedule.", "Heading back to the trailhead.") and the turn-back text."""
+    from backend.narration import FIXED_CUES, turn_back_text  # local import: narration has no demo deps
     lines = [str(n["text"]).strip() for n in plan.get("narration") or [] if isinstance(n, dict) and n.get("text")]
     timing = plan.get("timing") if isinstance(plan.get("timing"), dict) else {}
     if lines:
-        lines.append(TURN_BACK_CUE)
+        lines.extend(FIXED_CUES)
         if timing.get("sunset") and timing.get("available") is not False:
             lines.append(turn_back_text(timing["sunset"]))
     return list(dict.fromkeys(line for line in lines if line))

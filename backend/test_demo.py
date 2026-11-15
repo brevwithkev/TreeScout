@@ -79,13 +79,14 @@ class DemoModeTests(unittest.TestCase):
 
         with patch.object(main, "make_plan", lambda *a, **k: plan), patch.object(narration, "synthesize_tts", fake_tts):
             main.plan(main.PlanRequest(request="Voice plan"))
-            expected = ["Welcome.", "Halfway.", "Turn back now.",
+            expected = ["Welcome.", "Halfway.", "Turn back now.", "You're back on schedule.",
+                        "Heading back to the trailhead.",
                         "You're behind schedule. Turn back now to reach the trailhead before sunset at 17:12."]
             self.assertEqual(sorted(spoken), sorted(expected))
             for line in expected:
                 self.assertEqual(demo.demo_audio(line), f"mp3:{line}".encode())
             main.plan(main.PlanRequest(request="Voice plan"))  # recording again: audio already there
-            self.assertEqual(len(spoken), 4)
+            self.assertEqual(len(spoken), 6)
 
     def test_demo_tts_serves_saved_audio_whatever_the_voice(self):
         demo.TTS_DIR.mkdir(parents=True)
