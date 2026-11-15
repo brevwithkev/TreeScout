@@ -1,13 +1,398 @@
+/* ==========================================================================
+   TreeScout: "trail at dusk" design system
+   Every color, radius, shadow and font comes from the tokens below.
+   Do not hard-code these values elsewhere in this file or in app.js.
+   ========================================================================== */
+
 :root {
-  font-family: system-ui, sans-serif;
-  color: #20392b;
-  background: #f3f5ec;
+  color-scheme: dark;
+
+  /* Neutral grays */
+  --bg: #121315;          /* page / map backdrop */
+  --surface: #1b1c1f;     /* panels, top bar, hike bar */
+  --surface-2: #25272b;   /* raised: inputs, active tab, hover */
+  --line: #34363b;        /* borders and dividers */
+  --ink: #ecebe8;         /* primary text */
+  --ink-2: #b4b2ad;       /* secondary text */
+  --ink-3: #7d7b77;       /* muted labels, placeholders */
+
+  /* The one accent: sunset orange */
+  --accent: #f08c3c;
+  --accent-soft: rgba(240, 140, 60, 0.16);
+  --accent-ink: #1a1007;  /* text on solid accent */
+
+  /* State colors: always paired with an icon or a word */
+  --ok: #5cb87a;
+  --warn: #e0b54a;
+  --bad: #e5604f;
+  --info: #6aa6e0;
+
+  /* Shape and depth */
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.4);
+
+  /* Type */
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --focus-ring: 2px solid var(--accent);
+
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
 }
 
-body { margin: 0; padding: 2rem; }
-main { max-width: 44rem; margin: 12vh auto; }
-h1 { font-size: clamp(3rem, 10vw, 5rem); margin: 0 0 1rem; }
-p { line-height: 1.65; }
-.eyebrow { text-transform: uppercase; letter-spacing: 0.15em; }
-#status { font-weight: 600; }
-.note { color: #526558; }
+/* ---------- Base ---------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { color: var(--ink); line-height: 1.15; margin: 0 0 var(--space-3); }
+p { line-height: 1.65; margin: 0 0 var(--space-3); color: var(--ink-2); }
+a { color: var(--accent); }
+
+/* Times, distances, coordinates */
+.mono, time, .num, .coord {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible keyboard focus everywhere, in the accent color */
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+::selection { background: var(--accent-soft); color: var(--ink); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- Current landing page (index.html) ---------- */
+
+main {
+  max-width: 44rem;
+  margin: 10vh auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+h1 {
+  font-size: clamp(2.6rem, 9vw, 4.25rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: var(--space-4);
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+
+#status {
+  display: inline-block;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin-block: var(--space-2) var(--space-4);
+}
+
+.note { color: var(--ink-3); font-size: 0.92rem; margin: 0; }
+
+/* ==========================================================================
+   Components for the upcoming app UI (styled now, used once markup exists)
+   ========================================================================== */
+
+/* ---------- App shell: top bar + side panel + map ---------- */
+
+body.app { padding: 0; height: 100vh; overflow: hidden; }
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas: "top top" "panel map";
+  height: 100vh;
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .brand { font-weight: 600; letter-spacing: -0.01em; margin-right: auto; }
+.topbar .brand span { color: var(--accent); }
+
+@media (max-width: 760px) {
+  body.app { overflow: auto; height: auto; }
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 60vh auto;
+    grid-template-areas: "top" "map" "panel";
+    height: auto;
+  }
+}
+
+/* ---------- Badges (data mode, states) ---------- */
+/* Each badge carries a word and an icon (::before) so color is never the only signal. */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.badge::before { font-size: 0.85em; line-height: 1; }
+
+.badge--mock     { color: var(--ink-2); }
+.badge--mock::before     { content: "◇"; }          /* Mock data */
+.badge--live     { color: var(--ok);   border-color: currentColor; }
+.badge--live::before     { content: "●"; }          /* Live */
+.badge--recorded { color: var(--info); border-color: currentColor; }
+.badge--recorded::before { content: "⏺"; }          /* Recorded <time> */
+.badge--recorded time { color: var(--ink); }
+.badge--partial  { color: var(--warn); border-color: currentColor; }
+.badge--partial::before  { content: "◐"; }          /* Partial data */
+
+/* Generic state pills for hazards, warnings, sources */
+.state { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: 500; }
+.state--ok   { color: var(--ok); }   .state--ok::before   { content: "✓"; }
+.state--warn { color: var(--warn); } .state--warn::before { content: "▲"; }
+.state--bad  { color: var(--bad); }  .state--bad::before  { content: "✕"; }
+.state--info { color: var(--info); } .state--info::before { content: "i"; font-style: italic; font-weight: 700; }
+
+/* ---------- Side panel with tabs ---------- */
+
+.panel {
+  grid-area: panel;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tab:hover { color: var(--ink); background: var(--surface-2); }
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  background: var(--surface-2);
+  border-color: var(--line);
+  box-shadow: inset 0 -2px 0 var(--accent);   /* underline + selected state from aria */
+}
+
+.tab-panel { flex: 1; overflow-y: auto; padding: var(--space-4); }
+
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-4); margin: 0; }
+.kv dt { color: var(--ink-3); font-size: 0.85rem; }
+.kv dd { margin: 0; color: var(--ink); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-3); }
+
+/* ---------- Form controls ---------- */
+
+input, textarea, select {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+input::placeholder, textarea::placeholder { color: var(--ink-3); }
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offset: 0; border-color: var(--accent); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--ink-3); }
+.btn--primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.btn--primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Map ---------- */
+
+.map-wrap { grid-area: map; position: relative; min-height: 0; }
+#map, .map { position: absolute; inset: 0; background: var(--bg); }
+
+/* Route polyline: pass { className: "route-line" } to L.polyline */
+.route-line { stroke: var(--accent); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.route-line--casing { stroke: var(--bg); stroke-width: 9; }
+
+/* Leaflet chrome, themed to match */
+.leaflet-container { background: var(--bg); font-family: var(--font-ui); }
+.leaflet-bar, .leaflet-control-layers {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow) !important;
+  overflow: hidden;
+}
+.leaflet-bar a, .leaflet-control-layers {
+  color: var(--ink) !important;
+  background: var(--surface) !important;
+  border-color: var(--line) !important;
+}
+.leaflet-bar a:hover { background: var(--surface-2) !important; }
+.leaflet-control-layers-expanded { padding: var(--space-2) var(--space-3); color: var(--ink); }
+.leaflet-control-layers-separator { border-top-color: var(--line); }
+.leaflet-control-attribution {
+  color: var(--ink-3) !important;
+  background: color-mix(in srgb, var(--bg) 80%, transparent) !important;
+  font-size: 0.7rem;
+}
+.leaflet-control-attribution a { color: var(--ink-2) !important; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.leaflet-popup-content-wrapper { border-radius: var(--radius); }
+.leaflet-container a.leaflet-popup-close-button { color: var(--ink-3); }
+
+/* Trail markers (use L.divIcon with these classes) */
+.marker { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--bg); background: var(--ink); box-shadow: var(--shadow); }
+.marker--start  { background: var(--accent); }
+.marker--hiker  { background: var(--ink); outline: 3px solid var(--accent-soft); }
+
+/* ---------- Hike bar (floats over the bottom of the map) ---------- */
+
+.hike-bar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-5);
+  transform: translateX(-50%);
+  z-index: 1000;                    /* above Leaflet panes */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.hike-bar .play {
+  width: 40px; height: 40px;
+  padding: 0;
+  font-size: 1rem;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.speed { display: inline-flex; padding: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.speed button {
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ink-3);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+}
+.speed button:hover { color: var(--ink); }
+.speed button[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--accent); }
+
+.readout { display: flex; flex-direction: column; min-width: 4.5rem; }
+.readout .label { font-size: 0.66rem; }
+.readout .value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1rem; color: var(--ink); }
+
+/* Time-left-before-sunset readout: color plus a word/icon set by markup */
+.readout--sunset .value { color: var(--accent); }
+.readout--warn .value   { color: var(--warn); }
+.readout--warn .value::before { content: "▲ "; }
+.readout--bad .value    { color: var(--bad); }
+.readout--bad .value::before  { content: "✕ "; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab, .btn, .speed button { transition: background-color 120ms, color 120ms, border-color 120ms; }
+}
