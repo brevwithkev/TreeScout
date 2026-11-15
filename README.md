@@ -1,4 +1,4 @@
-# TreeScout
+# TrekChek
 
 **An AI agent team that plans your hike from live NASA data, checks the plan for safety, and talks you through the trail.**
 
