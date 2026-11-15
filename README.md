@@ -122,7 +122,7 @@ Distance dominates: loop, center and elevation together are worth at most 0.25. 
 - an active NASA EONET event is **within 5 km** of the route;
 - NWS gives a **precipitation chance of 70% or more**.
 
-A Gemini safety checker reviews the same data. On a rejection the planner gets the problems back and picks another trail or an earlier start (**max 2 rounds**). Unresolved problems become warnings. If the plan moves your requested start time, the first warning says so (e.g. *"You asked to start at 15:30; moved to 15:00 so you finish at least 30 min before sunset (17:12)."*). There is also a warning when no trail is within 50% of the requested distance, and one for places outside southeast Michigan.
+A Gemini safety checker reviews the same data. On a rejection the planner gets the problems back and picks another trail or an earlier start (**max 2 rounds**). Unresolved problems become warnings. If the plan moves your requested start time, the first warning says so (e.g. *"You asked to start at 15:30; moved to 15:00 so you finish at least 30 min before sunset (17:12)."*). There is also a warning when no trail is within 50% of the requested distance. A place that can't be found, or has no mapped trails, gets a warning and no trail.
 
 **4. Fallback.** If Gemini is missing, rate-limited, overloaded or slower than 10 s per call, the request goes straight to the rule-based planner, with no retries. That planner parses miles/km, today/tomorrow/weekdays, times like "2 PM", and easy/hilly/shaded/dog. It picks the top-ranked trail, runs the same Python checks and marks the plan `parsed_by: "rules"`.
 
@@ -148,7 +148,7 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 - **NASA POWER** values are ~0.5° grid averages, not trail-specific measurements.
 - **MODIS** imagery has 250 m pixels: good for clouds, snow and smoke, not trail detail.
 - **Naismith's rule** (5 km/h plus 1 h per 600 m of climb) is an estimate; real pace varies with terrain, weather and the hiker.
-- **Trail coverage is southeast Michigan.** Saved trail data covers the Ypsilanti area; elsewhere TreeScout depends on the public Overpass servers, which are often slow or unavailable (it gives up after 8 s).
+- **Trails anywhere OpenStreetMap has them** (branch `anywhere`). Places are looked up with OSM Nominatim; saved trail data covers the Ypsilanti area, and anywhere else needs one successful live Overpass lookup (the public servers are often slow or unavailable; TreeScout gives up after 8 s), which is then saved. NWS weather and alerts cover the US only; elsewhere those sections say unavailable.
 - NASA POWER and EONET requests give up after 8 s (the section shows "Unavailable"), and results are cached on disk for 6 h in `data/tool_cache/`, so a repeat plan can show hazards up to 6 h old (the Hazards tab shows when EONET was checked).
 - Gemini quota and latency vary; plans then come from the rule-based planner.
 - **TreeScout is a planning aid, not a safety guarantee.** Check local conditions, carry a light, and turn back early.

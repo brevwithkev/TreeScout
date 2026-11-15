@@ -23,6 +23,7 @@ OVERPASS_ENDPOINTS = (
 USER_AGENT = "TreeScout hackathon (contact: treescout-team)"  # the example.com placeholder got HTTP 406
 ROOT = Path(__file__).resolve().parents[2]
 DISK_CACHE_DIR = ROOT / "data" / "overpass_cache"
+SNAPSHOT_DIR = ROOT / "data" / "trail_snapshots"  # anywhere: one successful lookup per place, kept forever
 YPSILANTI_FIXTURE = ROOT / "tests" / "fixtures" / "overpass_ypsilanti.json"
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 300
@@ -30,6 +31,10 @@ DISK_FRESH_SECONDS = 24 * 3600  # trail geometry changes rarely; skip Overpass i
 OVERPASS_BUDGET_SECONDS = 8  # all live Overpass attempts together; then saved copies or an error
 TIMEOUT_SECONDS = 8          # per request (abandoned requests end on their own)
 HEDGE_SECONDS = 2.5          # start the next mirror if the current one hasn't answered by then
+ANYWHERE_RADII_KM = (10, 20)  # anywhere: 10 km, widened once to 20 km when it finds fewer than MIN_TRAILS
+MIN_TRAILS = 3
+SAC_SCALE = {"hiking": "T1", "mountain_hiking": "T2", "demanding_mountain_hiking": "T3", "alpine_hiking": "T4",
+             "demanding_alpine_hiking": "T5", "difficult_alpine_hiking": "T6"}
 _cache = {}
 _lock = Lock()
 
@@ -81,14 +86,19 @@ def _bbox(lat, lon, radius_km):
     ))
 
 
-def _parse_trails(payload):
+def _parse_trails(payload, unnamed_mountain_paths=False):
+    """Trails >= 1 km from an Overpass response. unnamed_mountain_paths (anywhere only): an unnamed
+    highway=path with a sac_scale is kept as "Unnamed mountain path (T3)"."""
     if not isinstance(payload, dict) or not isinstance(payload.get("elements"), list):
         raise ValueError("Response has no trail elements")
     if payload.get("remark"):
         raise ValueError(f"Overpass query failed: {payload['remark']}")
     trails = []
     for element in payload["elements"]:
-        name = element.get("tags", {}).get("name", "").strip()
+        tags = element.get("tags", {})
+        name = tags.get("name", "").strip()
+        if not name and unnamed_mountain_paths and element.get("type") == "way" and tags.get("sac_scale"):
+            name = f"Unnamed mountain path ({SAC_SCALE.get(tags['sac_scale'], tags['sac_scale'])})"
         if not name:
             continue
         if element["type"] == "relation":
@@ -127,7 +137,7 @@ def _save_json(path, payload):
                 logger.warning("Could not remove temporary cache file %s: %s", temporary, exc)
 
 
-def _query_endpoint(endpoint, query):
+def _query_endpoint(endpoint, query, parse=_parse_trails):
     request = Request(
         endpoint, data=urlencode({"data": query}).encode("utf-8"), method="POST",
         headers={"User-Agent": USER_AGENT, "Accept": "application/json",
@@ -137,16 +147,17 @@ def _query_endpoint(endpoint, query):
         if response.status != 200:
             raise ValueError(f"HTTP {response.status}")
         payload = json.load(response)
-    return payload, _parse_trails(payload)
+    return payload, parse(payload)
 
 
-def _query_hedged(query, failures):
+def _query_hedged(query, failures, budget=None, parse=_parse_trails):
     """Hedged requests: start the first endpoint, and start the next one after HEDGE_SECONDS without an
     answer (or right away after a failure). The first success wins. Everything together gives up after
-    OVERPASS_BUDGET_SECONDS; mirrors still running then are abandoned. Returns (endpoint, payload, trails)
-    or None, appending each failure to ``failures``."""
+    budget seconds (OVERPASS_BUDGET_SECONDS); mirrors still running then are abandoned. Returns
+    (endpoint, payload, trails) or None, appending each failure to ``failures``."""
     pool = ThreadPoolExecutor(max_workers=len(OVERPASS_ENDPOINTS), thread_name_prefix="overpass")
-    deadline = monotonic() + OVERPASS_BUDGET_SECONDS
+    budget = OVERPASS_BUDGET_SECONDS if budget is None else budget
+    deadline = monotonic() + budget
     try:
         pending, queue = {}, list(OVERPASS_ENDPOINTS)
         while queue or pending:
@@ -155,7 +166,7 @@ def _query_hedged(query, failures):
                 break
             if queue:  # each pass follows a hedge timeout or a failure: start the next mirror
                 endpoint = queue.pop(0)
-                pending[pool.submit(_query_endpoint, endpoint, query)] = endpoint
+                pending[pool.submit(_query_endpoint, endpoint, query, parse)] = endpoint
             done, _ = wait(pending, timeout=min(HEDGE_SECONDS, remaining) if queue else remaining,
                            return_when=FIRST_COMPLETED)
             for future in done:
@@ -169,8 +180,8 @@ def _query_hedged(query, failures):
                     continue
                 return endpoint, payload, trails
         for endpoint in pending.values():
-            failures.append(f"{endpoint}: no answer within {OVERPASS_BUDGET_SECONDS} s")
-            logger.warning("Overpass endpoint abandoned after %s s: %s", OVERPASS_BUDGET_SECONDS, endpoint)
+            failures.append(f"{endpoint}: no answer within {budget:g} s")
+            logger.warning("Overpass endpoint abandoned after %g s: %s", budget, endpoint)
         return None
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -250,3 +261,71 @@ def get_trails(lat, lon, radius_km=10):
             del _cache[next(iter(_cache))]
         _cache[bbox] = (monotonic(), trails)
         return deepcopy(trails)
+
+
+def _parse_anywhere(payload):
+    return _parse_trails(payload, unnamed_mountain_paths=True)
+
+
+def _anywhere_query(bounds):
+    """Hiking routes, named paths/footways, named tracks, and paths with a sac_scale (mountain trails)."""
+    return ('[out:json][timeout:25];('
+            f'relation["route"="hiking"]({bounds});'
+            f'way["name"]["highway"~"^(path|footway)$"]({bounds});'
+            f'way["highway"="track"]["name"]({bounds});'
+            f'way["highway"="path"]["sac_scale"]({bounds});'
+            ');out geom;')
+
+
+def _snapshot_path(lat, lon):
+    return SNAPSHOT_DIR / f"{lat:.3f}_{lon:.3f}.json"
+
+
+def get_trails_anywhere(lat, lon):
+    """(trails, radius_km) for any place outside the Ypsilanti path (get_trails).
+
+    A saved snapshot for the point (~100 m) is used first, forever. Otherwise live Overpass (the same mirrors,
+    OVERPASS_BUDGET_SECONDS for everything): 10 km, widened once to 20 km if that finds fewer than MIN_TRAILS.
+    A completed search is saved, even with no trails, so a place needs one successful lookup. Raises
+    OverpassError when Overpass does not answer and there is no snapshot.
+    """
+    lat, lon = float(lat), float(lon)
+    if not (isfinite(lat) and isfinite(lon) and -90 < lat < 90 and -180 <= lon <= 180):
+        raise ValueError("Provide finite coordinates away from the poles.")
+    path = _snapshot_path(lat, lon)
+    memo = ("anywhere", round(lat, 3), round(lon, 3))
+    with _lock:
+        if memo in _cache and monotonic() - _cache[memo][0] < CACHE_TTL_SECONDS:
+            trails, radius = _cache[memo][1]
+            return deepcopy(trails), radius
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            trails, radius = _parse_anywhere(saved["payload"]), saved["radius_km"]
+            logger.info("Using saved trail snapshot %s (%g km)", path.name, radius)
+        except (OSError, ValueError, KeyError, TypeError):
+            trails = None
+        if trails is None:
+            deadline, failures, best, complete = monotonic() + OVERPASS_BUDGET_SECONDS, [], None, False
+            for radius in ANYWHERE_RADII_KM:
+                left = deadline - monotonic()
+                if left <= 0.5:
+                    failures.append(f"no time left for the {radius} km search")
+                    break
+                bounds = ",".join(map(str, _bbox(lat, lon, radius)))
+                answer = _query_hedged(_anywhere_query(bounds), failures, budget=left, parse=_parse_anywhere)
+                if not answer:
+                    break
+                best = (answer[1], answer[2], radius)
+                if len(answer[2]) >= MIN_TRAILS or radius == ANYWHERE_RADII_KM[-1]:
+                    complete = True
+                    break
+            if best is None:
+                raise OverpassError(f"Overpass returned no trail data within {OVERPASS_BUDGET_SECONDS} s and there "
+                                    "is no saved snapshot for this place. " + "; ".join(failures))
+            payload, trails, radius = best
+            if complete:  # a 10 km answer whose 20 km retry failed is used but not saved
+                _save_json(path, {"lat": lat, "lon": lon, "radius_km": radius, "payload": payload})
+        if len(_cache) >= 128:
+            del _cache[next(iter(_cache))]
+        _cache[memo] = (monotonic(), (trails, radius))
+        return deepcopy(trails), radius

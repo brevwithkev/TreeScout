@@ -14,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import date as Date, datetime, timedelta
 from threading import Lock
 from time import perf_counter
-from zoneinfo import ZoneInfo
 import json
 import logging
 import os
@@ -23,21 +22,21 @@ import re
 from backend.narration import generate_narration
 from backend.tools.alerts import get_nws_alerts
 from backend.tools.climate import get_climate
-from backend.tools.common import now_iso, unavailable
+from backend.tools.common import now_iso, timezone_for, unavailable
 from backend.tools.anomaly import anomaly_condition, compare_climate
 from backend.tools.conditions import derive_conditions
 from backend.tools.elevation import get_elevation_gain
+from backend.tools.geocode import clean_place, geocode
 from backend.tools.hazards import get_hazards
 from backend.tools.ranking import _is_loop, rank_trails
 from backend.tools.seasonal import get_seasonal_hazards
 from backend.tools.space_weather import get_space_weather
 from backend.tools.timing import compute_timing
-from backend.tools.trails import get_trails, haversine
+from backend.tools.trails import get_trails, get_trails_anywhere, haversine
 from backend.tools.weather import get_hike_window, get_weather
 
 logger = logging.getLogger("treescout.agents")
 
-TZ = ZoneInfo("America/Detroit")
 KM_PER_MI = 1.609344
 PREFS = ("easy", "hilly", "shaded", "dog-friendly")
 DEFAULT_DISTANCE_KM = 8.0
@@ -49,8 +48,11 @@ PRECIP_LIMIT = 70            # % chance of precipitation during the hike window 
 REJECT_SEVERITIES = ("Extreme", "Severe")  # NWS alert severities that reject a plan
 WARN_SEVERITIES = ("Moderate",)            # NWS alert severities shown as warnings
 MAX_ROUNDS = 2
-OUTSIDE = "Outside our coverage area (southeast Michigan)"
-COVERAGE = {"lat": (41.70, 43.40), "lon": (-84.70, -82.40)}  # southeast Michigan
+# No coverage area: any place Nominatim finds and OpenStreetMap has trails for. These are the "no plan" warnings.
+NOT_FOUND = "Couldn't find {place}"
+LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
+NO_TRAILS = "No mapped trails found near {place}"
+TRAILS_DOWN = "Trail data unavailable right now; try again"
 
 LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it rejects anything under 10 s
 LLM_CALL_TIMEOUT_S = 10       # we stop waiting after this and fall back (fail fast on an overloaded model)
@@ -62,7 +64,7 @@ LLM_START_DEADLINE_S = 9
 GEMINI_TOP_N = 3  # Gemini may only choose among the top N ranked trails
 PREFETCH_WAIT_S = 3  # prefetched non-trail results the planner sees; slower ones are left to the planner
 
-PLACES = {  # town -> (lat, lon); the rule-based area parser
+PLACES = {  # town -> (lat, lon): a local gazetteer for the home area, so Ypsilanti plans need no geocoding
     "ypsilanti": (42.2411, -83.6130), "ann arbor": (42.2808, -83.7430), "dexter": (42.3384, -83.8886),
     "saline": (42.1667, -83.7816), "chelsea": (42.3181, -84.0205), "pinckney": (42.4570, -83.9460),
     "brighton": (42.5295, -83.7802), "whitmore lake": (42.4300, -83.7452), "canton": (42.3087, -83.4821),
@@ -76,8 +78,14 @@ NOT_PLACES = set(WEEKDAYS) | {"january", "february", "march", "april", "may", "j
                               "september", "october", "november", "december", "the", "a", "my", "least"}
 
 
-def in_coverage(lat, lon):
-    return COVERAGE["lat"][0] <= lat <= COVERAGE["lat"][1] and COVERAGE["lon"][0] <= lon <= COVERAGE["lon"][1]
+def local_place(name):
+    """(lat, lon) when the place's first part ("Ypsilanti" in "Ypsilanti, MI") is in PLACES, else None."""
+    return PLACES.get(str(name or "").split(",")[0].strip().lower())
+
+
+def same_place(a, b):
+    first = lambda s: str(s or "").split(",")[0].strip().lower()  # noqa: E731
+    return bool(a) and bool(b) and first(a) == first(b)
 
 
 def _mi(km):
@@ -115,7 +123,8 @@ def _summarize(name, result, args, label=None):
         return f"{result.get('source')} unavailable: {result.get('error')}"
     if name == "get_trails":
         cached = " (saved copy)" if any(t.get("cached") for t in result["items"]) else ""
-        return f"Found {len(result['items'])} named trails within {args[2]:g} km{cached}"
+        radius = result.get("radius_km", args[2] if len(args) > 2 else 0)
+        return f"Found {len(result['items'])} named trails within {radius:g} km{cached}"
     if name == "rank_trails":
         if not result:
             return "No trails to rank"
@@ -158,16 +167,29 @@ def _summarize(name, result, args, label=None):
         if not result:
             return "Trail conditions: no low light or freezing temperatures"
         return "Trail conditions: " + ", ".join(c["title"] for c in result)
+    if name == "geocode":
+        if not result.get("found"):
+            return f"Nominatim: no match for {result.get('query')}"
+        return f"Nominatim: {result['query']} -> {result['lat']:.4f}, {result['lon']:.4f} ({result['display_name']})"
     if name == "compute_timing":
         return (f"{label + ': ' if label else ''}{result['start']} start, about {result['est_duration_min']} min; "
                 f"sunset {result['sunset']}, latest safe start {result['latest_safe_start']}")
     return f"{name} done"
 
 
-def _safe_trails(lat, lon, radius_km):
+def _safe_trails_anywhere(lat, lon):
+    """Trails near a geocoded place: saved snapshot, else live Overpass at 10 km (20 km if under 3 trails)."""
     source = "OpenStreetMap (Overpass)"
-    if not in_coverage(lat, lon):
-        return unavailable(source, OUTSIDE)
+    try:
+        items, radius = get_trails_anywhere(lat, lon)
+        return {"source": source, "items": items, "radius_km": radius, "checked_at": now_iso()}
+    except Exception as exc:  # noqa: BLE001 - OverpassError, ValueError
+        return unavailable(source, str(exc))
+
+
+def _safe_trails(lat, lon, radius_km):
+    """The home area (Ypsilanti towns and the request's own lat/lon): unchanged since before "anywhere"."""
+    source = "OpenStreetMap (Overpass)"
     try:
         return {"source": source, "items": get_trails(lat, lon, radius_km), "checked_at": now_iso()}
     except Exception as exc:  # noqa: BLE001 - OverpassError, ValueError
@@ -263,9 +285,12 @@ def parse_request(text, today):
             out["area_name"], out["area_lat"], out["area_lon"] = place.title(), lat, lon
             break
     else:
-        named = re.search(r"\b(?:in|near|around|at|to)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+)*)", text)
-        if named and named.group(1).lower() not in NOT_PLACES:
-            out["unknown_place"] = named.group(1)
+        named = re.search(r"\b(?:in|near|around|at|to)\s+([A-Z][A-Za-z.'-]+(?:,?\s+[A-Z][A-Za-z.'-]+)*)", text)
+        words = named.group(1).split() if named else []
+        while words and words[-1].strip(",").lower() in NOT_PLACES:  # "near Banff Saturday" -> "Banff"
+            words.pop()
+        if words:
+            out["unknown_place"] = " ".join(words).strip(",")
     return out
 
 
@@ -377,20 +402,20 @@ def _json_from_text(text):
 
 
 PLANNER_TOOLS = [
-    ("get_trails", "Named hiking trails >= 1 km within radius_km of a point (OpenStreetMap). Call first.",
-     {"lat": "number", "lon": "number", "radius_km": "number"}, ["lat", "lon"]),
-    ("rank_trails", "Score the trails from the last get_trails call against the constraints (0-1).",
-     {"distance_km": "number", "prefs": "array", "center_lat": "number", "center_lon": "number"},
-     ["distance_km", "center_lat", "center_lon"]),
+    ("get_trails", "Named hiking trails >= 1 km near a place (OpenStreetMap). Give the place NAME as written in the "
+                   "request (e.g. \"Banff, Alberta\"); TreeScout looks it up. Call first.",
+     {"place": "string"}, ["place"]),
+    ("rank_trails", "Score the trails from get_trails against the constraints (0-1), around the last get_trails place.",
+     {"distance_km": "number", "prefs": "array"}, ["distance_km"]),
     ("get_elevation_gain", "Total ascent in meters along a trail from get_trails.", {"osm_id": "integer"}, ["osm_id"]),
     ("compute_timing", "Duration, sunset, latest safe start and turnaround time for a trail and start time.",
      {"osm_id": "integer", "date": "string", "start_time": "string"}, ["osm_id", "date", "start_time"]),
-    ("get_weather", "NWS daytime forecast for a point and date (YYYY-MM-DD).",
-     {"lat": "number", "lon": "number", "date": "string"}, ["lat", "lon", "date"]),
-    ("get_hazards", "Open NASA EONET natural hazard events within radius_km of a point.",
-     {"lat": "number", "lon": "number", "radius_km": "number"}, ["lat", "lon"]),
-    ("get_climate", "NASA POWER 20-year averages for the same calendar week.",
-     {"lat": "number", "lon": "number", "date": "string"}, ["lat", "lon", "date"]),
+    ("get_weather", "NWS daytime forecast (US only) for the last get_trails place and a date (YYYY-MM-DD).",
+     {"date": "string"}, ["date"]),
+    ("get_hazards", "Open NASA EONET natural hazard events within radius_km of the last get_trails place.",
+     {"radius_km": "number"}, []),
+    ("get_climate", "NASA POWER 20-year averages for the same calendar week at the last get_trails place.",
+     {"date": "string"}, ["date"]),
     ("get_space_weather", "NASA DONKI geomagnetic storms and aurora chance tonight.", {}, []),
 ]
 
@@ -407,15 +432,16 @@ def _declarations(types):
     return [types.Tool(function_declarations=decls)]
 
 
-PLANNER_PROMPT = """You are the TreeScout planner. You plan day hikes in southeast Michigan, USA.
-Today is {today} ({weekday}); times are America/Detroit. If the request names no place, search around {lat}, {lon} (Ypsilanti).
+PLANNER_PROMPT = """You are the TreeScout planner. You plan day hikes anywhere OpenStreetMap has mapped trails.
+Today is {today} ({weekday}). Times are local to the place. If the request names no place, TreeScout searches around the
+hiker's location ({lat}, {lon}).
 
 Steps:
-1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), area_lat/area_lon of the named place.
+1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), and place: the place NAME the request mentions, as a search string (e.g. "Grand Canyon South Rim", "Banff, Alberta"), or null if it names none. Never give coordinates: TreeScout looks the name up.
    These form values were set explicitly by the user and override the text: {form}
-2. If the place is outside southeast Michigan, call no tools and answer with "chosen_osm_id": null.
+2. If get_trails finds no trails (or the place cannot be found), answer with "chosen_osm_id": null.
 3. TreeScout has already run the tools for the area and constraints it guessed from the request; their results are in the
-   first message ("prefetched"). Use them. Call tools only for what is missing or different: another area (get_trails, then
+   first message ("prefetched"). Use them. Call tools only for what is missing or different: another place (get_trails, then
    rank_trails), different constraints (rank_trails), or timing for another trail or start time (compute_timing).
    Put independent calls in the same turn. If the prefetched results answer the request, reply right away.
 4. Choose the trail. Matching the requested distance matters most: pick from the top {top_n} of rank_trails, and among
@@ -423,7 +449,7 @@ Steps:
    top-ranked trail. Do not switch to a shorter trail just to fit a late start time: the safety checker moves the start
    earlier if needed.
 5. Answer with JSON only, no prose:
-{{"chosen_osm_id": <int or null>, "constraints": {{"distance_km": <number>, "date": "YYYY-MM-DD", "start": "HH:MM", "prefs": [...], "area_lat": <number>, "area_lon": <number>}}, "explanation": "<1-2 sentences>"}}
+{{"chosen_osm_id": <int or null>, "constraints": {{"distance_km": <number>, "date": "YYYY-MM-DD", "start": "HH:MM", "prefs": [...], "place": "<place name or null>"}}, "explanation": "<1-2 sentences>"}}
 
 Rules: every number in the explanation must come from a tool result, never from memory. The explanation must name the chosen
 trail and its distance in km and miles. There is no data about shade or dog rules: never claim a trail is shaded or dog-friendly."""
@@ -492,20 +518,46 @@ class PlanContext:
         self.started = perf_counter()
         self.text, self.body_lat, self.body_lon, self.radius_km = text, body_lat, body_lon, radius_km
         self.form = {k: v for k, v in (form or {}).items() if v not in (None, "", [])}
-        self.today = datetime.now(TZ).date()
+        self.today = datetime.now(timezone_for(body_lat, body_lon)).date()  # the hiker's own date
         self.trace = Trace()
         self.tools = Tools(self.trace, pool)
         self.rules = parse_request(text, self.today)
         self.trails_by_id = {}
         self.llm_down = None  # reason string once any Gemini call failed; no more Gemini calls after that
         self.user_osm_id = None  # trail the user chose from "Other options" (no Gemini calls then)
+        self.anywhere = set()  # rounded (lat, lon) of geocoded places: their trails use get_trails_anywhere
+        self.area = (body_lat, body_lon)  # where the Gemini tools without a place look (the last get_trails place)
 
     def elapsed(self):
         return perf_counter() - self.started
 
     # -- tool helpers ---------------------------------------------------------------------------
+    def resolve(self, place):
+        """A place name -> {"lat", "lon", "name"} or {"error", "name"}; None for no name. Home-area towns come from
+        PLACES (no lookup, so Ypsilanti plans are unchanged); everything else from Nominatim."""
+        name = clean_place(place)
+        if name is None:
+            return None
+        here = local_place(name)
+        if here:
+            return {"lat": here[0], "lon": here[1], "name": name}
+        found = self.tools.call("geocode", geocode, name)
+        if _failed(found):
+            return {"error": LOOKUP_DOWN.format(place=name), "name": name}
+        if not found.get("found"):
+            return {"error": NOT_FOUND.format(place=name), "name": name}
+        lat, lon = round(found["lat"], 4), round(found["lon"], 4)
+        self.anywhere.add((lat, lon))
+        return {"lat": lat, "lon": lon, "name": name}
+
+    def trails_future(self, lat, lon):
+        lat, lon = round(lat, 4), round(lon, 4)
+        if (lat, lon) in self.anywhere:
+            return self.tools.submit("get_trails", _safe_trails_anywhere, lat, lon)
+        return self.tools.submit("get_trails", _safe_trails, lat, lon, self.radius_km)
+
     def trails(self, lat, lon):
-        result = self.tools.call("get_trails", _safe_trails, round(lat, 4), round(lon, 4), self.radius_km)
+        result = self.trails_future(lat, lon).result()
         if not _failed(result):
             self.trails_by_id.update({t["osm_id"]: t for t in result["items"]})
         return result
@@ -548,13 +600,18 @@ class PlanContext:
                 return float(a.get(key, default))
             except (TypeError, ValueError):
                 return default
-        lat, lon = num("lat", self.body_lat), num("lon", self.body_lon)
-        if name == "get_trails":
-            return self.tools.submit("get_trails", _safe_trails, round(lat, 4), round(lon, 4), self.radius_km)
+        if name == "get_trails":  # a place name; never coordinates from the model
+            found = self.resolve(a.get("place"))
+            if found is not None and "error" in found:
+                return _Later(lambda: {"error": found["error"]})
+            if found is not None:
+                self.area = (found["lat"], found["lon"])
+            return self.trails_future(*self.area)
+        lat, lon = self.area
         if name == "rank_trails":
             constraints = {"distance_km": num("distance_km"), "prefs": [p for p in a.get("prefs") or [] if p in PREFS]}
-            return _Later(lambda: self.rank(list(self.trails_by_id.values()), constraints,
-                                            num("center_lat", self.body_lat), num("center_lon", self.body_lon)))
+            center = self.area
+            return _Later(lambda: self.rank(list(self.trails_by_id.values()), constraints, *center))
         if name == "get_weather":
             return self.tools.submit("get_weather", get_weather, round(lat, 4), round(lon, 4), str(a.get("date")))
         if name == "get_hazards":
@@ -584,7 +641,7 @@ class PlanContext:
             return result
         if name == "get_trails":
             self.trails_by_id.update({t["osm_id"]: t for t in result["items"]})
-            center = [self.body_lat, self.body_lon]
+            center = list(self.area)
             items = sorted(result["items"], key=lambda t: haversine(center, t["coords"][0]))[:30]
             return {"count": len(result["items"]), "trails": [
                 {"osm_id": t["osm_id"], "name": t["name"], "distance_km": t["distance_km"],
@@ -640,12 +697,23 @@ def make_plan(text, lat, lon, radius_km=SEARCH_RADIUS_KM, form=None, osm_id=None
 
 def _plan(ctx):
     rules, trace, today = ctx.rules, ctx.trace, ctx.today
-    rules_area = (rules.get("area_lat", ctx.body_lat), rules.get("area_lon", ctx.body_lon))
     rules_constraints = merge_constraints(ctx.form, None, rules, today)
+    # Where: a home-area town (PLACES), a place name looked up with Nominatim, or the request's own lat/lon.
+    place, area_error = rules.get("area_name") or rules.get("unknown_place"), None
+    if "area_lat" in rules:
+        rules_area = (rules["area_lat"], rules["area_lon"])
+    elif "unknown_place" in rules:
+        found = ctx.resolve(rules["unknown_place"])
+        rules_area = None if "error" in found else (found["lat"], found["lon"])
+        area_error = found.get("error")
+    else:
+        rules_area = (ctx.body_lat, ctx.body_lon)
+    if rules_area is not None:
+        ctx.area = rules_area
 
     # Prefetch independent tools while the LLM thinks (identical LLM calls reuse these results).
-    if in_coverage(*rules_area) and "unknown_place" not in rules:
-        ctx.tools.submit("get_trails", _safe_trails, round(rules_area[0], 4), round(rules_area[1], 4), ctx.radius_km)
+    if rules_area is not None:
+        ctx.trails_future(*rules_area)
         for name, fn in (("get_weather", get_weather), ("get_climate", get_climate)):
             ctx.tools.submit(name, fn, round(rules_area[0], 4), round(rules_area[1], 4), rules_constraints["date"])
         ctx.tools.submit("get_hazards", get_hazards, round(rules_area[0], 4), round(rules_area[1], 4), HAZARD_RADIUS_KM)
@@ -674,32 +742,21 @@ def _plan(ctx):
     # True when the hiker asked for a distance (form, text via Gemini, or text via rules), not the default.
     distance_given = any(_valid_km(src.get("distance_km")) for src in (ctx.form, llm_constraints, rules))
     area = rules_area
-    try:
-        llm_area = (float(llm_constraints["area_lat"]), float(llm_constraints["area_lon"]))
-        area = llm_area
-    except (KeyError, TypeError, ValueError):
-        pass
+    llm_place = clean_place(llm_constraints.get("place")) if parsed_by == "gemini" else None
+    if llm_place and llm_place.lower() not in ("null", "none") and not same_place(llm_place, place):
+        found = ctx.resolve(llm_place)  # Gemini gives a name only; TreeScout looks it up
+        place = llm_place
+        area, area_error = (None, found["error"]) if "error" in found else ((found["lat"], found["lon"]), None)
 
-    # Outside when the area is outside southeast Michigan, or the rules found a place we don't know and the planner
-    # (rules, or Gemini returning no trail) didn't place the request in our area.
-    gemini_no_trail = parsed_by == "gemini" and (llm_answer or {}).get("chosen_osm_id") is None
-    outside = not in_coverage(*area) or ("unknown_place" in rules and (parsed_by == "rules" or gemini_no_trail))
-    if outside:
-        where = rules.get("unknown_place") or f"{area[0]:.2f}, {area[1]:.2f}"
-        trace.add("planner", "reject", f"{where} is outside our coverage area (southeast Michigan)")
-        return _response(ctx, constraints, parsed_by, None, [], OUTSIDE + ".", None, None, None,
-                         space.result(), None, {"approved": False, "rounds": 0}, [OUTSIDE])
+    if area is None:  # the place name was not found (or the lookup is down): no plan
+        trace.add("planner", "reject", area_error)
+        return _response(ctx, constraints, parsed_by, None, [], area_error + ".", None, None, None,
+                         space.result(), None, {"approved": False, "rounds": 0}, [area_error])
 
     trails = ctx.trails(*area)
     if _failed(trails) or not trails["items"]:
-        if _failed(trails):
-            message = ("Trail data for this area is unavailable right now (OpenStreetMap Overpass did not respond). "
-                       "Try again in a few minutes.")
-            trail_section = trails
-        else:
-            message = f"No named trails at least 1 km long within {ctx.radius_km:g} km of this area."
-            trail_section = unavailable("OpenStreetMap (Overpass)", message)
-        trace.add("planner", "reject", message)
+        message = TRAILS_DOWN if _failed(trails) else NO_TRAILS.format(place=place or "this location")
+        trace.add("planner", "reject", message if not _failed(trails) else f"{message} ({trails.get('error')})")
         # Sections that don't depend on a trail still report their own results.
         here = (round(area[0], 4), round(area[1], 4))
         weather = ctx.tools.submit("get_weather", get_weather, *here, constraints["date"])
@@ -709,7 +766,7 @@ def _plan(ctx):
                  "hike_window": unavailable("NWS hourly", "No trail chosen, so there is no hike window"),
                  "conditions": []}
         extra["climate_anomaly"] = compare_climate(extra["hike_window"], climate.result())
-        return _response(ctx, constraints, parsed_by, trail_section, [], message, None, weather.result(),
+        return _response(ctx, constraints, parsed_by, None, [], message + ".", None, weather.result(),
                          climate.result(), space.result(), hazards.result(), {"approved": False, "rounds": 0},
                          [message] + _advisories(extra), extra)
 
@@ -791,7 +848,7 @@ def _plan(ctx):
     if far:
         warnings.insert(0, far)
     warnings += [w for w in _advisories(plan) if w not in warnings]
-    now = datetime.now(TZ)
+    now = datetime.now(timezone_for(*area))  # the trail's local time
     if plan["constraints"]["date"] == now.date().isoformat() and plan["constraints"]["start"] < now.strftime("%H:%M"):
         warnings.append(f"The {plan['constraints']['start']} start time has already passed today.")
     alternatives = [{"name": t["name"], "osm_id": t["osm_id"], "distance_km": t["distance_km"], "score": t["score"]}
@@ -805,8 +862,11 @@ def _plan(ctx):
 def _prefetch_context(ctx, area, constraints, space):
     """Run trails -> rank -> elevation -> timing for the rules guess, and summarize every prefetched
     result for the planner's first message, so it can usually decide in one LLM turn."""
-    out = {"guessed_area": {"lat": area[0], "lon": area[1]}, "guessed_constraints": constraints}
-    if in_coverage(*area) and "unknown_place" not in ctx.rules:
+    out = {"guessed_place": ctx.rules.get("area_name") or ctx.rules.get("unknown_place"),
+           "guessed_constraints": constraints}
+    if area is None:
+        out["get_trails"] = {"error": "TreeScout could not find the place in the request"}
+    if area is not None:
         trails = ctx.trails(*area)
         if _failed(trails):
             out["get_trails"] = trails
@@ -1102,10 +1162,9 @@ ANOMALY_KEYS = ("source", "temp_diff_f", "rain_flag", "notable", "summary")
 
 def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, timing, weather, climate, space,
               hazards, checker, warnings, extra=None):
-    """extra: the alerts, hike_window, seasonal, conditions and climate_anomaly results (None outside our area)."""
+    """extra: the alerts, hike_window, seasonal, conditions and climate_anomaly results (None without a place)."""
     extra = extra or {}
-    outside = trail is None
-    error = OUTSIDE if outside and OUTSIDE in warnings else (warnings[0] if warnings else None)
+    error = warnings[0] if warnings else None
     if hazards is None:
         hazards_out, hazards_at = _section(None, (), "NASA EONET", error), None
     elif _failed(hazards):

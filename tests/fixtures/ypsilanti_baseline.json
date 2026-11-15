@@ -1,0 +1,275 @@
+{
+ "Easy 3 mile walk near Ypsilanti this Saturday morning": {
+  "trail": {
+   "name": "Yellow Trail (Central Loop)",
+   "osm_id": 399341772,
+   "distance_km": 3.481,
+   "elevation_gain_m": 12
+  },
+  "coords": 330,
+  "alternatives": [
+   {
+    "name": "Red Trail (East Loop)",
+    "osm_id": 399341931,
+    "distance_km": 2.45,
+    "score": 0.578
+   },
+   {
+    "name": "Fitness Trail (1.4 Miles)",
+    "osm_id": 316055720,
+    "distance_km": 2.225,
+    "score": 0.535
+   }
+  ],
+  "constraints": {
+   "distance_km": 4.8,
+   "date": "2026-11-20",
+   "start": "09:00",
+   "prefs": [
+    "easy"
+   ],
+   "parsed_by": "rules"
+  },
+  "timing": {
+   "start": "09:00",
+   "est_duration_min": 43,
+   "sunset": "17:08",
+   "latest_safe_start": "15:55",
+   "turnaround_by": "16:17"
+  },
+  "explanation": "Yellow Trail (Central Loop) is 3.5 km (2.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 09:00, you should be back about 7 h 25 min before sunset (17:08).",
+  "warnings": [],
+  "narration": [
+   "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:08; turn around by 16:17. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 2.5 to go.",
+   "Halfway. You're on schedule if it's before 16:17.",
+   "You've hiked 2 kilometers, 1.5 to go.",
+   "You've hiked 3 kilometers, 0.5 to go.",
+   "You're back at the trailhead."
+  ],
+  "checker": {
+   "approved": true,
+   "rounds": 1
+  }
+ },
+ "4 miles with hills near Ypsilanti starting at 3:30 PM tomorrow": {
+  "trail": {
+   "name": "Rolling Hills MTB Trail",
+   "osm_id": 55124390,
+   "distance_km": 6.786,
+   "elevation_gain_m": 12
+  },
+  "coords": 810,
+  "alternatives": [
+   {
+    "name": "Yellow Trail (Central Loop)",
+    "osm_id": 399341772,
+    "distance_km": 3.481,
+    "score": 0.565
+   },
+   {
+    "name": "Red Trail (East Loop)",
+    "osm_id": 399341931,
+    "distance_km": 2.45,
+    "score": 0.448
+   }
+  ],
+  "constraints": {
+   "distance_km": 6.4,
+   "date": "2026-11-20",
+   "start": "15:16",
+   "prefs": [
+    "hilly"
+   ],
+   "parsed_by": "rules"
+  },
+  "timing": {
+   "start": "15:16",
+   "est_duration_min": 83,
+   "sunset": "17:08",
+   "latest_safe_start": "15:16",
+   "turnaround_by": "15:57"
+  },
+  "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), ranked #1 of 27 trails nearby. Starting at 15:16, you should be back about 29 min before sunset (17:08).",
+  "warnings": [
+   "You asked to start at 15:30; moved to 15:16 so you finish at least 30 min before sunset (17:08)."
+  ],
+  "narration": [
+   "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:08; turn around by 15:57. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 5.8 to go.",
+   "You've hiked 2 kilometers, 4.8 to go.",
+   "You've hiked 3 kilometers, 3.8 to go.",
+   "Halfway. You're on schedule if it's before 15:57.",
+   "You've hiked 4 kilometers, 2.8 to go.",
+   "You've hiked 5 kilometers, 1.8 to go.",
+   "You've hiked 6 kilometers, 0.8 to go.",
+   "You've reached the end of Rolling Hills MTB Trail."
+  ],
+  "checker": {
+   "approved": true,
+   "rounds": 2
+  }
+ },
+ "Dog-friendly loop under 5 km near Ypsilanti": {
+  "trail": {
+   "name": "Yellow Trail (Central Loop)",
+   "osm_id": 399341772,
+   "distance_km": 3.481,
+   "elevation_gain_m": 12
+  },
+  "coords": 330,
+  "alternatives": [
+   {
+    "name": "Red Trail (East Loop)",
+    "osm_id": 399341931,
+    "distance_km": 2.45,
+    "score": 0.622
+   },
+   {
+    "name": "Fitness Trail (1.4 Miles)",
+    "osm_id": 316055720,
+    "distance_km": 2.225,
+    "score": 0.572
+   }
+  ],
+  "constraints": {
+   "distance_km": 4.2,
+   "date": "2026-11-20",
+   "start": "10:00",
+   "prefs": [
+    "dog-friendly"
+   ],
+   "parsed_by": "rules"
+  },
+  "timing": {
+   "start": "10:00",
+   "est_duration_min": 43,
+   "sunset": "17:08",
+   "latest_safe_start": "15:55",
+   "turnaround_by": "16:17"
+  },
+  "explanation": "Yellow Trail (Central Loop) is 3.5 km (2.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 25 min before sunset (17:08).",
+  "warnings": [],
+  "narration": [
+   "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:08; turn around by 16:17. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 2.5 to go.",
+   "Halfway. You're on schedule if it's before 16:17.",
+   "You've hiked 2 kilometers, 1.5 to go.",
+   "You've hiked 3 kilometers, 0.5 to go.",
+   "You're back at the trailhead."
+  ],
+  "checker": {
+   "approved": true,
+   "rounds": 1
+  }
+ },
+ "10 miles with hills near Ypsilanti starting at 2 PM tomorrow": {
+  "trail": {
+   "name": "Rolling Hills MTB Trail",
+   "osm_id": 55124390,
+   "distance_km": 6.786,
+   "elevation_gain_m": 12
+  },
+  "coords": 810,
+  "alternatives": [
+   {
+    "name": "Yellow Trail (Central Loop)",
+    "osm_id": 399341772,
+    "distance_km": 3.481,
+    "score": 0.319
+   },
+   {
+    "name": "Fitness Trail (1.4 Miles)",
+    "osm_id": 316055720,
+    "distance_km": 2.225,
+    "score": 0.275
+   }
+  ],
+  "constraints": {
+   "distance_km": 16.1,
+   "date": "2026-11-20",
+   "start": "14:00",
+   "prefs": [
+    "hilly"
+   ],
+   "parsed_by": "rules"
+  },
+  "timing": {
+   "start": "14:00",
+   "est_duration_min": 83,
+   "sunset": "17:08",
+   "latest_safe_start": "15:16",
+   "turnaround_by": "15:57"
+  },
+  "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), ranked #1 of 27 trails nearby. Starting at 14:00, you should be back about 1 h 45 min before sunset (17:08).",
+  "warnings": [
+   "No trail near 16.1 km in this area; the closest is Rolling Hills MTB Trail (6.8 km)."
+  ],
+  "narration": [
+   "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:08; turn around by 15:57. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 5.8 to go.",
+   "You've hiked 2 kilometers, 4.8 to go.",
+   "You've hiked 3 kilometers, 3.8 to go.",
+   "Halfway. You're on schedule if it's before 15:57.",
+   "You've hiked 4 kilometers, 2.8 to go.",
+   "You've hiked 5 kilometers, 1.8 to go.",
+   "You've hiked 6 kilometers, 0.8 to go.",
+   "You've reached the end of Rolling Hills MTB Trail."
+  ],
+  "checker": {
+   "approved": true,
+   "rounds": 1
+  }
+ },
+ "A 5 km walk tomorrow": {
+  "trail": {
+   "name": "Yellow Trail (Central Loop)",
+   "osm_id": 399341772,
+   "distance_km": 3.481,
+   "elevation_gain_m": 12
+  },
+  "coords": 330,
+  "alternatives": [
+   {
+    "name": "Rolling Hills MTB Trail",
+    "osm_id": 55124390,
+    "distance_km": 6.786,
+    "score": 0.559
+   },
+   {
+    "name": "Red Trail (East Loop)",
+    "osm_id": 399341931,
+    "distance_km": 2.45,
+    "score": 0.548
+   }
+  ],
+  "constraints": {
+   "distance_km": 5.0,
+   "date": "2026-11-20",
+   "start": "10:00",
+   "prefs": [],
+   "parsed_by": "rules"
+  },
+  "timing": {
+   "start": "10:00",
+   "est_duration_min": 43,
+   "sunset": "17:08",
+   "latest_safe_start": "15:55",
+   "turnaround_by": "16:17"
+  },
+  "explanation": "Yellow Trail (Central Loop) is 3.5 km (2.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 25 min before sunset (17:08).",
+  "warnings": [],
+  "narration": [
+   "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:08; turn around by 16:17. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 2.5 to go.",
+   "Halfway. You're on schedule if it's before 16:17.",
+   "You've hiked 2 kilometers, 1.5 to go.",
+   "You've hiked 3 kilometers, 0.5 to go.",
+   "You're back at the trailhead."
+  ],
+  "checker": {
+   "approved": true,
+   "rounds": 1
+  }
+ }
+}

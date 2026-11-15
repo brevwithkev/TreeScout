@@ -1,0 +1,23 @@
+[
+ {
+  "place_id": 320865180,
+  "licence": "Data \u00a9 OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 124669358,
+  "lat": "36.0254537",
+  "lon": "-113.8321139",
+  "class": "natural",
+  "type": "cliff",
+  "place_rank": 22,
+  "importance": 0.10667666666666664,
+  "addresstype": "cliff",
+  "name": "Grand Canyon South Rim",
+  "display_name": "Grand Canyon South Rim, Mohave County, Arizona, United States",
+  "boundingbox": [
+   "35.9776610",
+   "36.0650604",
+   "-113.9153111",
+   "-113.7878525"
+  ]
+ }
+]

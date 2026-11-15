@@ -201,19 +201,22 @@ class GuardAndCoverageTests(unittest.TestCase):
         self.assertIn("Matching the requested distance matters most: pick from the top 3 of rank_trails", prompt)
         self.assertNotIn("Prefer a start time", prompt)
 
-    def test_gemini_no_trail_for_unknown_place_is_outside_coverage(self):
-        result = self.plan_with("A hike in Antarctica tomorrow",
-                                {"chosen_osm_id": None, "constraints": {"distance_km": 8}, "explanation": "Out of area."})
+    def test_place_gemini_names_is_looked_up_and_not_found(self):
+        not_found = {"source": "OpenStreetMap Nominatim", "query": "Atlantis", "found": False, "checked_at": "t"}
+        with patch("backend.agents.geocode", lambda name: not_found):
+            result = self.plan_with("A hike somewhere lost tomorrow",
+                                    {"chosen_osm_id": None, "explanation": "?",
+                                     "constraints": {"distance_km": 8, "place": "Atlantis",
+                                                     "area_lat": 1.0, "area_lon": 2.0}})  # coordinates are ignored
         self.assertEqual(result["constraints"]["parsed_by"], "gemini")
         self.assertIsNone(result["trail"])
-        self.assertEqual(result["warnings"], ["Outside our coverage area (southeast Michigan)"])
-        self.assertIn("Antarctica is outside our coverage area (southeast Michigan)",
-                      [e["summary"] for e in result["agent_trace"]])
+        self.assertEqual(result["warnings"], ["Couldn't find Atlantis"])
+        self.assertIn("Couldn't find Atlantis", [e["summary"] for e in result["agent_trace"]])
 
     def test_gemini_no_trail_for_known_place_still_plans(self):
         result = self.plan_with("2 km walk near Ypsilanti tomorrow", {"chosen_osm_id": None, "explanation": "?"})
         self.assertEqual(result["trail"]["name"], "Trail 1")
-        self.assertNotIn("Outside our coverage area (southeast Michigan)", result["warnings"])
+        self.assertFalse([w for w in result["warnings"] if w.startswith("Couldn't find")])
 
 
 class LateStartRevisionTests(unittest.TestCase):
@@ -526,12 +529,15 @@ class HazardCheckerTests(unittest.TestCase):
             result = self.plan(text="2 km walk near Ypsilanti starting at 4:50 PM tomorrow")
         self.assertIn("Low light", [c["title"] for c in result["conditions"]])
 
-    def test_outside_coverage_marks_the_new_sections_unavailable(self):
-        result = agents.make_plan("A hike in Antarctica tomorrow", 42.0, -83.0)
-        for key in ("alerts", "hike_window", "seasonal"):
+    def test_place_not_found_marks_the_new_sections_unavailable(self):
+        not_found = {"source": "OpenStreetMap Nominatim", "query": "Xanadu", "found": False, "checked_at": "t"}
+        with patch("backend.agents.geocode", lambda name: not_found):
+            result = agents.make_plan("A hike in Xanadu tomorrow", 42.0, -83.0)
+        for key in ("alerts", "hike_window", "seasonal", "climate_anomaly"):
             self.assertIs(result[key]["available"], False, key)
         self.assertEqual(result["conditions"], [])
-        self.assertEqual(result["warnings"], ["Outside our coverage area (southeast Michigan)"])
+        self.assertIsNone(result["trail"])
+        self.assertEqual(result["warnings"], ["Couldn't find Xanadu"])
 
 
 if __name__ == "__main__":

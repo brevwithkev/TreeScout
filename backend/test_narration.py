@@ -273,8 +273,11 @@ class PlanNarrationStepTests(unittest.TestCase):
         self.assertEqual(kinds[0], "trailhead")
         self.assertEqual(kinds[-1], "finish")
         self.assertIn(result["trail"]["name"], result["narration"][0]["text"])
-        outside = agents.make_plan("A hike in Antarctica tomorrow", 42.0, -83.0)
-        self.assertEqual(outside["narration"], [])
+        not_found = {"source": "OpenStreetMap Nominatim", "query": "Xanadu", "found": False, "checked_at": "t"}
+        with patch("backend.agents.geocode", lambda name: not_found):  # offline: no place, no trail
+            nowhere = agents.make_plan("A hike in Xanadu tomorrow", 42.0, -83.0)
+        self.assertIsNone(nowhere["trail"])
+        self.assertEqual(nowhere["narration"], [])
 
 
 if __name__ == "__main__":
