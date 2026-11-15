@@ -1335,23 +1335,24 @@
     42.1764135,
     -83.6278049
    ]
-  ]
+  ],
+  "elevation_source": "Open-Meteo Elevation"
  },
  "alternatives": [
   {
    "name": "Red Trail (East Loop)",
    "osm_id": 399341931,
    "distance_km": 2.45,
-   "score": 0.619
+   "score": 0.565
   },
   {
-   "name": "Fitness Trail (1.4 Miles)",
-   "osm_id": 316055720,
-   "distance_km": 2.225,
-   "score": 0.549
+   "name": "Rolling Hills MTB Trail",
+   "osm_id": 55124390,
+   "distance_km": 6.786,
+   "score": 0.513
   }
  ],
- "explanation": "The Yellow Trail (Central Loop) is 3.481 km (2.2 miles) long and offers an easy walk near Ypsilanti.",
+ "explanation": "Yellow Trail (Central Loop) was chosen as the top-ranked trail, offering a distance of 3.481 km (2.2 miles).",
  "timing": {
   "start": "09:00",
   "est_duration_min": 46,
@@ -1375,10 +1376,48 @@
   "source": "NASA DONKI",
   "kp_max": null,
   "aurora_chance": "low",
-  "checked_at": "2026-11-15T05:49:15Z"
+  "checked_at": "2026-11-15T12:27:13Z"
  },
  "hazards": [],
- "hazards_checked_at": "2026-11-15T05:30:44Z",
+ "hazards_checked_at": "2026-11-15T12:17:21Z",
+ "alerts": {
+  "source": "NWS",
+  "items": [],
+  "checked_at": "2026-11-15T12:17:21Z"
+ },
+ "hike_window": {
+  "source": "NWS hourly",
+  "window": "09:00-09:46",
+  "max_precip_chance": 0,
+  "min_temp_f": 37,
+  "max_temp_f": 37,
+  "max_wind_mph": 2,
+  "conditions": [
+   "Mostly Sunny"
+  ],
+  "summary": "During your hike: 0% rain, 37F, wind 2 mph",
+  "checked_at": "2026-11-15T12:27:12Z"
+ },
+ "seasonal": {
+  "source": "TreeScout seasonal calendar",
+  "items": [
+   {
+    "title": "Firearm deer season",
+    "advice": "Wear blaze orange; hunters are common near state game areas",
+    "source": "Michigan DNR season dates",
+    "link": "https://www.michigan.gov/dnr/things-to-do/hunting/deer"
+   }
+  ],
+  "checked_at": "2026-11-15T12:27:12Z"
+ },
+ "conditions": [],
+ "climate_anomaly": {
+  "source": "NWS vs NASA POWER 2006-2025",
+  "temp_diff_f": -2,
+  "rain_flag": false,
+  "notable": false,
+  "summary": "Typical for this week"
+ },
  "reports": [],
  "agent_trace": [
   {
@@ -1386,49 +1425,42 @@
    "step": "tool",
    "tool": "get_trails",
    "summary": "Found 27 named trails within 15 km",
-   "ms": 44
+   "ms": 38
   },
   {
    "agent": "planner",
    "step": "tool",
-   "tool": "get_climate",
-   "summary": "NASA POWER 2006-2025: this week averages a high of 8.2 °C, low -0.4 °C, 1.9 mm precipitation/day",
-   "ms": 1
+   "tool": "rank_trails",
+   "summary": "Ranked 27 trails; top: Yellow Trail (Central Loop) (3.5 km, score 0.72)",
+   "ms": 0
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_hazards",
    "summary": "No active NASA EONET events within 100 km",
-   "ms": 0
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "rank_trails",
-   "summary": "Ranked 27 trails; top: Yellow Trail (Central Loop) (3.5 km, score 0.74)",
-   "ms": 0
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "get_elevation_gain",
-   "summary": "Fitness Trail (1.4 Miles): 50 m elevation gain",
-   "ms": 96
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "get_elevation_gain",
-   "summary": "Yellow Trail (Central Loop): 40 m elevation gain",
-   "ms": 124
+   "ms": 3
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_elevation_gain",
    "summary": "Red Trail (East Loop): 31 m elevation gain",
-   "ms": 126
+   "ms": 1
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_elevation_gain",
+   "summary": "Yellow Trail (Central Loop): 40 m elevation gain",
+   "ms": 2
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_elevation_gain",
+   "summary": "Fitness Trail (1.4 Miles): 50 m elevation gain",
+   "ms": 2
   },
   {
    "agent": "planner",
@@ -1440,23 +1472,51 @@
   {
    "agent": "planner",
    "step": "tool",
+   "tool": "get_climate",
+   "summary": "NASA POWER 2006-2025: this week averages a high of 8.2 °C, low -0.4 °C, 1.9 mm precipitation/day",
+   "ms": 46
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
    "tool": "compute_timing",
    "summary": "Yellow Trail (Central Loop): 09:00 start, about 46 min; sunset 17:11, latest safe start 15:55",
+   "ms": 5
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_seasonal_hazards",
+   "summary": "Seasonal: Firearm deer season on 2026-11-16",
    "ms": 0
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_nws_alerts",
+   "summary": "NWS: no active alerts for this point",
+   "ms": 0
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_hike_window",
+   "summary": "NWS hourly 09:00-09:46: 0% rain, 37F, wind 2 mph (Mostly Sunny)",
+   "ms": 2
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_weather",
    "summary": "NWS Monday: Mostly Sunny, 52F, 0% chance of precipitation",
-   "ms": 355
+   "ms": 176
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_space_weather",
    "summary": "NASA DONKI: 0 geomagnetic storms 2026-11-12 to 2026-11-16; aurora chance low",
-   "ms": 575
+   "ms": 820
   },
   {
    "agent": "planner",
@@ -1464,9 +1524,23 @@
    "summary": "Gemini proposed Yellow Trail (Central Loop) (osm_id 399341772)"
   },
   {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "compare_climate",
+   "summary": "Compared NWS forecast with NASA POWER normals: Typical for this week",
+   "ms": 0
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "derive_conditions",
+   "summary": "Trail conditions: no low light or freezing temperatures",
+   "ms": 0
+  },
+  {
    "agent": "checker",
    "step": "decide",
-   "summary": "Gemini and Python checks approved: 09:00 start is no later than the 15:55 latest safe start; no NASA EONET events within 5 km; 0% chance of precipitation"
+   "summary": "Gemini and Python checks approved: 09:00 start is no later than the 15:55 latest safe start; no NASA EONET events within 5 km; 0% chance of precipitation during the hike; no Severe or Extreme NWS alerts"
   },
   {
    "agent": "planner",
@@ -1483,7 +1557,7 @@
    "coord_index": 0,
    "km": 0.0,
    "kind": "trailhead",
-   "text": "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:11; turn around by 16:18. Weather: Mostly Sunny, 52F."
+   "text": "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:11; turn around by 16:18. Weather: Mostly Sunny, 52F. Deer season: wear orange."
   },
   {
    "coord_index": 93,
@@ -1516,7 +1590,9 @@
    "text": "You're back at the trailhead."
   }
  ],
- "warnings": [],
+ "warnings": [
+  "Firearm deer season: Wear blaze orange; hunters are common near state game areas."
+ ],
  "flood_or_burn_layer": null,
- "demo_recorded_at": "2026-11-15T05:49:20Z"
+ "demo_recorded_at": "2026-11-15T12:27:16Z"
 }

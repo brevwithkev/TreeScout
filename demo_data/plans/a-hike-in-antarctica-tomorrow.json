@@ -29,7 +29,7 @@
   "source": "NASA DONKI",
   "kp_max": null,
   "aurora_chance": "low",
-  "checked_at": "2026-11-15T05:53:52Z"
+  "checked_at": "2026-11-15T12:27:22Z"
  },
  "hazards": {
   "available": false,
@@ -37,6 +37,27 @@
   "error": "Outside our coverage area (southeast Michigan)"
  },
  "hazards_checked_at": null,
+ "alerts": {
+  "available": false,
+  "source": "NWS",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "hike_window": {
+  "available": false,
+  "source": "NWS hourly",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "seasonal": {
+  "available": false,
+  "source": "TreeScout seasonal calendar",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "conditions": [],
+ "climate_anomaly": {
+  "available": false,
+  "source": "NWS vs NASA POWER",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
  "reports": [],
  "agent_trace": [
   {
@@ -44,7 +65,7 @@
    "step": "tool",
    "tool": "get_space_weather",
    "summary": "NASA DONKI: 0 geomagnetic storms 2026-11-12 to 2026-11-16; aurora chance low",
-   "ms": 763
+   "ms": 611
   },
   {
    "agent": "planner",
@@ -66,5 +87,5 @@
   "Outside our coverage area (southeast Michigan)"
  ],
  "flood_or_burn_layer": null,
- "demo_recorded_at": "2026-11-15T05:53:55Z"
+ "demo_recorded_at": "2026-11-15T12:27:24Z"
 }
