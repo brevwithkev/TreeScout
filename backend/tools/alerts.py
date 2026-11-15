@@ -9,7 +9,7 @@ logger = logging.getLogger("treescout.tools")
 
 SOURCE = "NWS"
 URL = "https://api.weather.gov/alerts/active"
-TIMEOUT = 8                 # hard cap for the whole request; then available:false
+# Timeouts: common.FIRST_TIMEOUT_S (6 s), then one retry with common.RETRY_TIMEOUT_S (3 s).
 CACHE_SECONDS = 10 * 60     # alerts change quickly, so only 10 min per location (~1 km)
 SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1, "Unknown": 0}
 
@@ -48,8 +48,8 @@ def get_nws_alerts(lat, lon):
         return cached
     try:
         # The point is put in the URL as-is: NWS wants a literal comma, not %2C.
-        data = retry_once(lambda: get_json_within(TIMEOUT, f"{URL}?point={lat:.4f},{lon:.4f}",
-                                                  headers={"Accept": "application/geo+json"}), "NWS alerts")
+        data = retry_once(lambda timeout: get_json_within(timeout, f"{URL}?point={lat:.4f},{lon:.4f}",
+                                                          headers={"Accept": "application/geo+json"}), "NWS alerts")
         result = {"source": SOURCE, "items": parse_alerts(data), "checked_at": now_iso()}
     except Exception as exc:  # noqa: BLE001 - a tool must never raise
         stale = cache_get("nws_alerts", key, common.STALE_MAX_S)

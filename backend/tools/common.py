@@ -55,6 +55,8 @@ def get_json_within(seconds, url, params=None, headers=None):
 _DEADLINE_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tool-http")
 
 RETRY_DELAY_S = 1.0          # wait before the single retry of a transient failure
+FIRST_TIMEOUT_S = 6.0        # retried sources: the first attempt gets 6 s ...
+RETRY_TIMEOUT_S = 3.0        # ... the retry 3 s, so about 6 + 1 + 3 = 10 s worst case per source
 STALE_MAX_S = 6 * 3600       # a failed live check may fall back to a cached success up to this old
 
 
@@ -68,15 +70,16 @@ def transient(exc):
 
 
 def retry_once(fn, label):
-    """fn(); on a transient error (5xx, timeout) wait RETRY_DELAY_S and call it once more. Other errors raise."""
+    """fn(timeout_s) with FIRST_TIMEOUT_S; on a transient error (5xx, timeout) wait RETRY_DELAY_S and call
+    fn(RETRY_TIMEOUT_S) once more. Other errors raise. fn must keep the whole attempt within timeout_s."""
     try:
-        return fn()
+        return fn(FIRST_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - re-raised unless transient
         if not transient(exc):
             raise
         logger.warning("%s: %s: %s; retrying once in %g s", label, type(exc).__name__, exc, RETRY_DELAY_S)
         time.sleep(RETRY_DELAY_S)
-        return fn()
+        return fn(RETRY_TIMEOUT_S)
 
 
 # ---------------------------------------------------------------------------------------------

@@ -22,13 +22,14 @@ YPSI = (42.2411, -83.6130)
 
 
 class Fetch:
-    """Stands in for get_json_within: answers by URL and counts calls."""
+    """Stands in for get_json_within: answers by URL and counts calls (and the time limit each one got)."""
 
     def __init__(self, routes):
-        self.routes, self.urls = routes, []
+        self.routes, self.urls, self.timeouts = routes, [], []
 
     def __call__(self, seconds, url, params=None, headers=None):
         self.urls.append(url)
+        self.timeouts.append(seconds)
         for prefix, payload in self.routes.items():
             if url.startswith(prefix):
                 if isinstance(payload, list):  # answers in order, the last one repeats
@@ -90,6 +91,11 @@ class AlertsTests(TempCache):
         self.assertEqual((result["available"], result["source"]), (False, "NWS"))
         self.assertIn("TimeoutError", result["error"])
         self.assertEqual(len(fetch.urls), 4)  # each call: the request and one retry
+        self.assertEqual(fetch.timeouts, [6, 3, 6, 3])
+
+    def test_worst_case_is_about_ten_seconds(self):
+        self.assertEqual((common.FIRST_TIMEOUT_S, common.RETRY_TIMEOUT_S), (6, 3))
+        self.assertLessEqual(common.FIRST_TIMEOUT_S + 1.0 + common.RETRY_TIMEOUT_S, 10)
 
     def test_a_500_is_retried_once(self):
         fetch = Fetch({alerts.URL: [http_500(), ALERTS]})
@@ -176,6 +182,9 @@ class HikeWindowTests(TempCache):
         self.assertEqual(result["summary"], "During your hike: 0% rain, 42-46F, wind 5 mph")
         self.assertNotIn("stale", result)
         self.assertEqual(len(fetch.urls), 3)  # /points, hourly 500, hourly retry
+        self.assertEqual(fetch.timeouts[0], 6)                 # /points: first attempt
+        self.assertTrue(5 < fetch.timeouts[1] <= 6)            # hourly: what is left of the 6 s
+        self.assertTrue(2 < fetch.timeouts[2] <= 3)            # hourly retry: 3 s (points now cached)
 
     def test_two_500s_fall_back_to_the_cached_forecast(self):
         first, _ = self.window()
@@ -198,6 +207,7 @@ class HikeWindowTests(TempCache):
             result = weather.get_hike_window(*YPSI, "2026-11-16", "10:00", 90)
         self.assertIs(result["stale"], True)
         self.assertEqual(len(fetch.urls), 2)
+        self.assertEqual(fetch.timeouts, [6, 3])               # /points timed out twice
 
     def test_hourly_unavailable_without_a_cached_forecast(self):
         result, fetch = self.window(http_500())

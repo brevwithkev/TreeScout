@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
 import re
+import time
 
 from backend.tools import common
 from backend.tools.common import (cache_get, cache_put, get_json, get_json_within, now_iso, parse_date, retry_once,
@@ -15,19 +16,20 @@ logger = logging.getLogger("treescout.tools")
 SOURCE = "NWS"
 HOURLY_SOURCE = "NWS hourly"
 TIMEOUT = 10
-HOURLY_TIMEOUT = 8            # hard cap per request for the hourly forecast
+HOURLY_TIMEOUT = 8            # hard cap for /points when called from get_weather
+# Hourly forecast: common.FIRST_TIMEOUT_S (6 s) for /points + hourly together, then one retry with 3 s.
 CACHE_SECONDS = 10 * 60       # points metadata and hourly periods, per location (~1 km)
 TZ = ZoneInfo("America/Detroit")
 HEADERS = {"Accept": "application/geo+json"}
 
 
-def _points(lat, lon):
+def _points(lat, lon, timeout=HOURLY_TIMEOUT):
     """The /points metadata (forecast URLs) for a location, cached for 10 min."""
     key = {"lat": round(float(lat), 2), "lon": round(float(lon), 2)}
     cached = cache_get("nws_points", key, CACHE_SECONDS)
     if cached is not None:
         return cached
-    props = get_json_within(HOURLY_TIMEOUT, f"https://api.weather.gov/points/{float(lat):.4f},{float(lon):.4f}",
+    props = get_json_within(timeout, f"https://api.weather.gov/points/{float(lat):.4f},{float(lon):.4f}",
                             headers=HEADERS)["properties"]
     points = {"forecast": props["forecast"], "forecastHourly": props["forecastHourly"]}
     cache_put("nws_points", key, points)
@@ -92,9 +94,13 @@ def hourly_periods(lat, lon):
     if cached is not None:
         return cached
 
-    def fetch():
-        url = _points(lat, lon)["forecastHourly"]
-        return get_json_within(HOURLY_TIMEOUT, url, headers=HEADERS)["properties"]["periods"]
+    def fetch(timeout):  # /points (usually cached) and the hourly forecast share one time budget
+        deadline = time.monotonic() + timeout
+        url = _points(lat, lon, timeout)["forecastHourly"]
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(f"no answer within {timeout:g} s")
+        return get_json_within(left, url, headers=HEADERS)["properties"]["periods"]
     try:
         result = {"periods": retry_once(fetch, "NWS hourly"), "checked_at": now_iso()}
     except Exception as exc:  # noqa: BLE001 - fall back to the last good forecast, else re-raise
