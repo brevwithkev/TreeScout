@@ -32,13 +32,19 @@
                           "source": "Michigan DNR season dates",
                           "link": "https://www.michigan.gov/dnr/things-to-do/hunting/deer"}]},
   "conditions": [{"title": "Freezing temperatures", "advice": "Down to 31F during your hike; watch for icy boardwalks",
-                  "source": "NWS hourly"}],
+                  "source": "NWS hourly"},
+                 {"title": "Unusual conditions",
+                  "advice": "About 9F colder than normal for this week (forecast high 38F vs normal 47F); dress for it",
+                  "source": "NWS vs NASA POWER 2006-2025"}],
+  "climate_anomaly": {"source": "NWS vs NASA POWER 2006-2025", "temp_diff_f": -9, "rain_flag": false, "notable": true,
+                      "summary": "About 9F colder than normal for this week"},
   "reports": [],
   "agent_trace": [
     {"agent": "planner", "step": "tool", "tool": "get_trails", "summary": "Found 14 named trails within 10 km", "ms": 120},
     {"agent": "planner", "step": "tool", "tool": "get_hazards", "summary": "No active NASA EONET events within 100 km", "ms": 840},
     {"agent": "planner", "step": "tool", "tool": "get_nws_alerts", "summary": "NWS: 1 active alert; Winter Weather Advisory (Moderate)", "ms": 310},
     {"agent": "planner", "step": "tool", "tool": "get_hike_window", "summary": "NWS hourly 10:00-12:00: 20% rain, 31-38F, wind 10 mph (Cloudy, Slight Chance Snow Showers)", "ms": 420},
+    {"agent": "planner", "step": "tool", "tool": "compare_climate", "summary": "Compared NWS forecast with NASA POWER normals: About 9F colder than normal for this week", "ms": 0},
     {"agent": "checker", "step": "reject", "summary": "River Bend Path: turnaround 16:55 is after the 16:38 safe limit"},
     {"agent": "planner", "step": "decide", "summary": "Chose Example Loop (score 0.86)"}
   ],
@@ -46,6 +52,7 @@
   "narration": [{"coord_index": 0, "text": "Welcome to the trailhead. Sunset is at 5:08 PM. Winter Weather Advisory in effect."}],
   "warnings": ["NWS Winter Weather Advisory (Moderate): Winter Weather Advisory issued November 14 at 3:05PM EST until November 15 at 1:00PM EST by NWS Detroit/Pontiac MI",
                "Firearm deer season: Wear blaze orange; hunters are common near state game areas.",
-               "Freezing temperatures: Down to 31F during your hike; watch for icy boardwalks."],
+               "Freezing temperatures: Down to 31F during your hike; watch for icy boardwalks.",
+               "Unusual conditions: About 9F colder than normal for this week (forecast high 38F vs normal 47F); dress for it."],
   "flood_or_burn_layer": null
 }

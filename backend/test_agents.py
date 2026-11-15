@@ -411,6 +411,33 @@ class HazardCheckerTests(unittest.TestCase):
         self.assertTrue({"get_nws_alerts", "get_hike_window", "get_seasonal_hazards", "derive_conditions"} <= tools)
         self.assertTrue(result["checker"]["approved"])
 
+    def test_typical_climate_is_reported_without_a_warning(self):
+        result = self.plan()  # 10:00-10:30, high 50F vs normal 46.4F
+        self.assertEqual(result["climate_anomaly"], {"source": "NWS vs NASA POWER 2006-2025", "temp_diff_f": 4,
+                                                     "rain_flag": False, "notable": False,
+                                                     "summary": "Typical for this week"})
+        self.assertIn("Compared NWS forecast with NASA POWER normals: Typical for this week",
+                      [e["summary"] for e in result["agent_trace"]])
+        self.assertFalse([w for w in result["warnings"] if w.startswith("Unusual conditions")])
+
+    def test_unusual_cold_is_a_warning_not_a_rejection(self):
+        result = self.plan(window={"min_temp_f": 33, "max_temp_f": 37})  # 37F vs normal high 46.4F: 9F colder
+        self.assertTrue(result["checker"]["approved"])
+        self.assertEqual(result["climate_anomaly"]["summary"], "About 9F colder than normal for this week")
+        self.assertTrue(result["climate_anomaly"]["notable"])
+        self.assertIn("Unusual conditions", [c["title"] for c in result["conditions"]])
+        self.assertIn("Unusual conditions: About 9F colder than normal for this week (forecast high 37F vs normal "
+                      "46F); dress for it.", result["warnings"])
+        self.assertFalse(self.rejections(result))
+
+    def test_missing_power_gives_an_unavailable_anomaly(self):
+        with patch("backend.agents.get_climate", lambda lat, lon, d: {"available": False, "source": "NASA POWER",
+                                                                      "error": "timed out"}):
+            result = self.plan()
+        self.assertEqual(result["climate_anomaly"], {"available": False, "source": "NWS vs NASA POWER",
+                                                     "error": "NASA POWER normals unavailable (timed out)"})
+        self.assertTrue(result["checker"]["approved"])
+
     def test_severe_alert_rejects(self):
         result = self.plan(alerts=[SEVERE])
         self.assertFalse(result["checker"]["approved"])

@@ -24,6 +24,7 @@ from backend.narration import generate_narration
 from backend.tools.alerts import get_nws_alerts
 from backend.tools.climate import get_climate
 from backend.tools.common import now_iso, unavailable
+from backend.tools.anomaly import anomaly_condition, compare_climate
 from backend.tools.conditions import derive_conditions
 from backend.tools.elevation import get_elevation_gain
 from backend.tools.hazards import get_hazards
@@ -148,6 +149,8 @@ def _summarize(name, result, args, label=None):
     if name == "get_seasonal_hazards":
         titles = [i["title"] for i in result["items"]]
         return f"Seasonal: {', '.join(titles)} on {args[0]}" if titles else f"Seasonal: nothing in season on {args[0]}"
+    if name == "compare_climate":
+        return f"Compared NWS forecast with NASA POWER normals: {result['summary']}"
     if name == "derive_conditions":
         if not result:
             return "Trail conditions: no low light or freezing temperatures"
@@ -427,8 +430,9 @@ Approve unless the data shows a concrete safety problem: finishing after sunset,
 an active natural hazard near the trail, a Severe or Extreme NWS alert, a high chance of precipitation during the hike
 (judge rain by hike_window.max_precip_chance, the NWS hourly forecast for the hike's hours, not the daily weather), or a
 forecast that is dangerous for the hike (for example thunderstorms, or temperatures below freezing with precipitation).
-Moderate or Minor alerts, seasonal items (such as hunting season) and trail conditions (low light, freezing temperatures
-alone) are shown to the hiker as warnings: they are not reasons to reject. Missing data alone is not a problem.
+Moderate or Minor alerts, seasonal items (such as hunting season), trail conditions (low light, freezing temperatures
+alone, unusual conditions) and climate_anomaly (forecast vs 20-year normals) are shown to the hiker as warnings: they are
+not reasons to reject. Missing data alone is not a problem.
 Each problem is one sentence that quotes the numbers. Do not invent data."""
 
 
@@ -701,6 +705,7 @@ def _plan(ctx):
         extra = {"alerts": ctx.alerts(area).result(), "seasonal": ctx.seasonal(area, constraints["date"]).result(),
                  "hike_window": unavailable("NWS hourly", "No trail chosen, so there is no hike window"),
                  "conditions": []}
+        extra["climate_anomaly"] = compare_climate(extra["hike_window"], climate.result())
         return _response(ctx, constraints, parsed_by, trail_section, [], message, None, weather.result(),
                          climate.result(), space.result(), hazards.result(), {"approved": False, "rounds": 0},
                          [message] + _advisories(extra), extra)
@@ -791,7 +796,7 @@ def _plan(ctx):
     return _response(ctx, plan["constraints"], parsed_by, plan["trail"], alternatives, explanation, plan["timing"],
                      plan["weather"], plan["climate"], space.result(), plan["hazards"],
                      {"approved": approved, "rounds": len(attempts)}, warnings,
-                     {k: plan[k] for k in ("alerts", "hike_window", "seasonal", "conditions")})
+                     {k: plan[k] for k in ("alerts", "hike_window", "seasonal", "conditions", "climate_anomaly")})
 
 
 def _prefetch_context(ctx, area, constraints, space):
@@ -878,7 +883,11 @@ def _assemble(ctx, trail, constraints, area):
     gain_source = None if _failed(gain) else gain.get("source")
     timing = ctx.timing(trail, gain_m, constraints["date"], constraints["start"]).result()
     window = ctx.hike_window(area, constraints["date"], timing).result()
+    anomaly = ctx.tools.call("compare_climate", compare_climate, window, climate.result())
     conditions = ctx.tools.call("derive_conditions", derive_conditions, timing, window)
+    unusual = anomaly_condition(anomaly)  # notable only; a warning via _advisories, never a rejection
+    if unusual:
+        conditions = [*conditions, unusual]
     return {
         "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": trail["distance_km"],
                   "elevation_gain_m": gain_m, "coords": trail["coords"],
@@ -886,6 +895,7 @@ def _assemble(ctx, trail, constraints, area):
         "score": trail.get("score", 0.0), "constraints": dict(constraints),
         "timing": timing, "weather": weather.result(), "climate": climate.result(), "hazards": hazards.result(),
         "alerts": alerts.result(), "hike_window": window, "seasonal": seasonal.result(), "conditions": conditions,
+        "climate_anomaly": anomaly,
     }
 
 
@@ -1080,11 +1090,12 @@ ALERT_KEYS = ("source", "items", "checked_at")
 WINDOW_KEYS = ("source", "window", "max_precip_chance", "min_temp_f", "max_temp_f", "max_wind_mph", "conditions",
                "summary", "checked_at")
 SEASONAL_KEYS = ("source", "items", "checked_at")
+ANOMALY_KEYS = ("source", "temp_diff_f", "rain_flag", "notable", "summary")
 
 
 def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, timing, weather, climate, space,
               hazards, checker, warnings, extra=None):
-    """extra: the alerts, hike_window, seasonal and conditions results (None outside our coverage area)."""
+    """extra: the alerts, hike_window, seasonal, conditions and climate_anomaly results (None outside our area)."""
     extra = extra or {}
     outside = trail is None
     error = OUTSIDE if outside and OUTSIDE in warnings else (warnings[0] if warnings else None)
@@ -1115,6 +1126,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "hike_window": _section(extra.get("hike_window"), WINDOW_KEYS, "NWS hourly", error),
         "seasonal": _section(extra.get("seasonal"), SEASONAL_KEYS, "TreeScout seasonal calendar", error),
         "conditions": list(extra.get("conditions") or []),
+        "climate_anomaly": _section(extra.get("climate_anomaly"), ANOMALY_KEYS, "NWS vs NASA POWER", error),
         "reports": [],
         "agent_trace": ctx.trace.items,
         "checker": checker,

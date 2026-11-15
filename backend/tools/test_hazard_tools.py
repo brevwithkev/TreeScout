@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.tools import alerts, common, conditions, seasonal, weather
+from backend.tools import alerts, anomaly, common, conditions, seasonal, weather
 
 FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 ALERTS = json.loads((FIXTURES / "nws_alerts_ypsilanti.json").read_text(encoding="utf-8"))
@@ -178,6 +178,60 @@ class ConditionsTests(unittest.TestCase):
 
     def test_unavailable_inputs(self):
         self.assertEqual(conditions.derive_conditions({"available": False}, {"available": False}), [])
+
+
+# Fixture values: NASA POWER 2006-2025 normals for mid-November in Ypsilanti (rounded) and NWS hike windows.
+POWER = {"source": "NASA POWER", "years": "2006-2025", "avg_high_c": 9.4, "avg_low_c": 0.6, "avg_precip_mm": 2.3,
+         "days": 140, "checked_at": "t"}        # normal high 48.9F, low 33.1F
+COLD = {"source": "NWS hourly", "window": "10:00-12:00", "max_precip_chance": 10, "min_temp_f": 36, "max_temp_f": 40,
+        "max_wind_mph": 5, "conditions": ["Cloudy"], "summary": "During your hike: 10% rain, 36-40F, wind 5 mph",
+        "checked_at": "t"}
+
+
+class ClimateAnomalyTests(unittest.TestCase):
+    def test_9f_colder_is_notable(self):
+        found = anomaly.compare_climate(COLD, POWER)    # daytime: forecast high 40F vs normal high 48.9F
+        self.assertEqual({k: found[k] for k in ("source", "temp_diff_f", "rain_flag", "notable", "summary")},
+                         {"source": "NWS vs NASA POWER 2006-2025", "temp_diff_f": -9, "rain_flag": False,
+                          "notable": True, "summary": "About 9F colder than normal for this week"})
+        self.assertEqual(anomaly.anomaly_condition(found), {
+            "title": "Unusual conditions",
+            "advice": "About 9F colder than normal for this week (forecast high 40F vs normal 49F); dress for it",
+            "source": "NWS vs NASA POWER 2006-2025"})
+
+    def test_3f_warmer_is_typical(self):
+        found = anomaly.compare_climate({**COLD, "max_temp_f": 52}, POWER)
+        self.assertEqual((found["temp_diff_f"], found["notable"], found["summary"]), (3, False, "Typical for this week"))
+        self.assertIsNone(anomaly.anomaly_condition(found))
+
+    def test_rain_in_a_dry_week(self):
+        wet = {**COLD, "max_temp_f": 49, "max_precip_chance": 60}
+        found = anomaly.compare_climate(wet, {**POWER, "avg_precip_mm": 1.4})
+        self.assertTrue(found["rain_flag"] and found["notable"])
+        self.assertEqual(found["summary"], "60% chance of rain in a week that is usually dry (1.4 mm/day)")
+        self.assertFalse(anomaly.compare_climate(wet, POWER)["rain_flag"])            # 2.3 mm/day: not a dry week
+        self.assertFalse(anomaly.compare_climate({**wet, "max_precip_chance": 49},
+                                                 {**POWER, "avg_precip_mm": 1.4})["rain_flag"])
+
+    def test_same_part_of_the_day(self):
+        night = anomaly.compare_climate({**COLD, "window": "22:00-23:00", "min_temp_f": 25}, POWER)
+        self.assertEqual(night["temp_diff_f"], -8)                                    # low 25F vs normal low 33.1F
+        morning = anomaly.compare_climate({**COLD, "window": "07:00-08:30", "min_temp_f": 36, "max_temp_f": 40}, POWER)
+        self.assertEqual(morning["temp_diff_f"], -3)                                  # 38F vs normal average 41F
+
+    def test_missing_power_is_unavailable(self):
+        found = anomaly.compare_climate(COLD, {"available": False, "source": "NASA POWER", "error": "timed out"})
+        self.assertEqual(found["available"], False)
+        self.assertEqual(found["source"], "NWS vs NASA POWER")
+        self.assertIn("NASA POWER normals unavailable (timed out)", found["error"])
+        self.assertIsNone(anomaly.anomaly_condition(found))
+
+    def test_missing_nws_or_values_is_unavailable(self):
+        found = anomaly.compare_climate({"available": False, "source": "NWS hourly", "error": "502"}, POWER)
+        self.assertEqual((found["available"], found["error"]), (False, "NWS hourly forecast unavailable (502)"))
+        self.assertEqual(anomaly.compare_climate(None, None)["available"], False)
+        self.assertEqual(anomaly.compare_climate({**COLD, "max_temp_f": None}, POWER)["available"], False)
+        self.assertEqual(anomaly.compare_climate(COLD, {**POWER, "avg_high_c": "x"})["available"], False)  # no crash
 
 
 if __name__ == "__main__":
