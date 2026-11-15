@@ -467,6 +467,7 @@ class PlanContext:
         self.rules = parse_request(text, self.today)
         self.trails_by_id = {}
         self.llm_down = None  # reason string once any Gemini call failed; no more Gemini calls after that
+        self.user_osm_id = None  # trail the user chose from "Other options" (no Gemini calls then)
 
     def elapsed(self):
         return perf_counter() - self.started
@@ -580,10 +581,12 @@ def _hm(minutes):
     return f"{h} h {m:02d} min" if h else f"{m} min"
 
 
-def make_plan(text, lat, lon, radius_km=SEARCH_RADIUS_KM, form=None):
+def make_plan(text, lat, lon, radius_km=SEARCH_RADIUS_KM, form=None, osm_id=None):
+    """osm_id: the user picked this trail from "Other options"; it replaces the planner's pick (no Gemini calls)."""
     pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="tool")
     try:
         ctx = PlanContext(text, lat, lon, radius_km, form, pool)
+        ctx.user_osm_id = osm_id
         logger.info("Plan request: %r form=%s", text, ctx.form)
         return _plan(ctx)
     finally:
@@ -607,6 +610,8 @@ def _plan(ctx):
     # ---- PLANNER, round 1 -------------------------------------------------------------------------
     planner, llm_answer, parsed_by = None, None, "rules"
     try:
+        if ctx.user_osm_id is not None:
+            raise LLMUnavailable("the user chose a trail")  # no Gemini call; the user's choice replaces the pick
         planner = Planner(ctx)
         llm_answer = planner.run(f"Request: {ctx.text}\nprefetched: {json.dumps(prefetched, default=str)}")
         parsed_by = "gemini"
@@ -614,9 +619,10 @@ def _plan(ctx):
         trace.add("planner", "decide", f"Gemini proposed {picked['name']} (osm_id {picked['osm_id']})" if picked
                   else f"Gemini proposed osm_id {llm_answer.get('chosen_osm_id')}")
     except (LLMUnavailable, ValueError) as exc:
-        logger.warning("LLM planner unavailable: %s", exc)
-        trace.add("planner", "fallback", "LLM unavailable, used rule-based planner")
         planner = None
+        if ctx.user_osm_id is None:
+            logger.warning("LLM planner unavailable: %s", exc)
+            trace.add("planner", "fallback", "LLM unavailable, used rule-based planner")
 
     llm_constraints = (llm_answer or {}).get("constraints") if isinstance((llm_answer or {}).get("constraints"), dict) else {}
     constraints = merge_constraints(ctx.form, llm_constraints, rules, today)
@@ -665,12 +671,21 @@ def _plan(ctx):
                  else t for t in ranked]
     ranked = ctx.rank(with_gain, constraints, *area)
 
+    user_trail = None
+    if ctx.user_osm_id is not None:
+        user_trail = next((t for t in ranked if t["osm_id"] == ctx.user_osm_id), None)
+        if user_trail is None:
+            trace.add("planner", "reject", f"Requested trail osm_id {ctx.user_osm_id} is not in the trail data for "
+                                           "this area; planned as usual")
+        else:
+            trace.add("planner", "decide", f"User chose {user_trail['name']} from other options")
+
     # ---- choose, assemble, check: up to MAX_ROUNDS --------------------------------------------------
     rejected, attempts = set(), []
     answer = llm_answer
     asked_start = constraints["start"]  # before any checker-driven revision
     for round_no in range(1, MAX_ROUNDS + 1):
-        chosen = _choose(ctx, answer, ranked, rejected)
+        chosen = user_trail or _choose(ctx, answer, ranked, rejected)
         if answer and isinstance(answer.get("constraints"), dict) and round_no > 1:
             constraints = merge_constraints({k: v for k, v in ctx.form.items() if k != "start"},
                                             answer["constraints"], {**rules, **constraints}, today)
@@ -707,6 +722,8 @@ def _plan(ctx):
         rejected.add(chosen["osm_id"])
         if round_no == MAX_ROUNDS:
             break
+        if user_trail is not None and not _late_start_only(all_problems, plan["timing"]):
+            break  # keep the user's trail; its problems become warnings (only a late start is fixed)
         # Send problems back to the planner for a different trail or start time.
         answer, constraints = _revise(ctx, planner, all_problems, plan, ranked, rejected, constraints)
         if answer is None and planner is not None:

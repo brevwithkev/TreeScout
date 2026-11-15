@@ -45,6 +45,8 @@ class PlanRequest(BaseModel):
     date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     start: str | None = Field(default=None, pattern=r"^\d{1,2}:\d{2}$")
     prefs: list[str] | None = None
+    # A trail from "Other options": replaces the planner's pick (timing, checks, narration still run; no Gemini).
+    osm_id: int | None = Field(default=None, gt=0)
 
 
 @app.post("/plan")
@@ -54,13 +56,13 @@ def plan(body: PlanRequest):
     DEMO_MODE=1: a saved recording whose slug matches the request text is returned instantly (form fields
     are ignored then). DEMO_RECORD=1: successful live plans (and their voice lines) are saved to demo_data/.
     """
-    if demo.demo_mode():
+    if demo.demo_mode() and body.osm_id is None:  # a chosen alternative is planned live, not replayed
         recorded = demo.load_recording(demo.slugify(body.request))
         if recorded is not None:
             return recorded
     form = {"distance_km": body.distance_km, "date": body.date, "start": body.start, "prefs": body.prefs}
-    result = make_plan(body.request, body.lat, body.lon, radius_km=body.radius_km, form=form)
-    if demo.demo_record():
+    result = make_plan(body.request, body.lat, body.lon, radius_km=body.radius_km, form=form, osm_id=body.osm_id)
+    if demo.demo_record() and body.osm_id is None:  # never overwrite a demo with a switched trail
         demo.save_recording(result)
     return result
 

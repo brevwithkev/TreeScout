@@ -29,8 +29,8 @@ class DemoModeTests(unittest.TestCase):
             self.addCleanup(p.stop)
         self.live_calls = []
 
-        def make_plan(text, lat, lon, radius_km=15, form=None):
-            self.live_calls.append(text)
+        def make_plan(text, lat, lon, radius_km=15, form=None, osm_id=None):
+            self.live_calls.append(text if osm_id is None else f"{text} #{osm_id}")
             return fake_plan(text)
 
         p = patch.object(main, "make_plan", make_plan)
@@ -129,6 +129,16 @@ class DemoModeTests(unittest.TestCase):
         result = main.plan(main.PlanRequest(request="Something never recorded"))
         self.assertEqual(self.live_calls, ["Something never recorded"])
         self.assertNotIn("demo_recorded_at", result)
+
+    def test_chosen_alternative_is_neither_replayed_nor_recorded(self):
+        self.demo_env(False)
+        main.plan(main.PlanRequest(request="Easy walk"))                 # recorded
+        saved = (self.plans_dir / "easy-walk.json").read_text(encoding="utf-8")
+        self.demo_env(True)
+        result = main.plan(main.PlanRequest(request="Easy walk", osm_id=42))
+        self.assertNotIn("demo_recorded_at", result)                    # planned live, not replayed
+        self.assertEqual(self.live_calls, ["Easy walk", "Easy walk #42"])
+        self.assertEqual((self.plans_dir / "easy-walk.json").read_text(encoding="utf-8"), saved)  # not overwritten
 
     def test_demo_endpoints(self):
         self.demo_env(False)

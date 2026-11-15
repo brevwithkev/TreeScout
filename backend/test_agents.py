@@ -247,6 +247,63 @@ class LateStartRevisionTests(unittest.TestCase):
         self.assertFalse([e for e in result["agent_trace"] if e["summary"].startswith("Planner moved the start")])
 
 
+class OtherOptionsTests(unittest.TestCase):
+    """POST /plan with osm_id: the user's trail replaces the pick; no Gemini calls; checks still run."""
+
+    setUp = FailFastTests.setUp
+
+    def plan(self, text, osm_id, hazards=None):
+        from google.genai import types
+        fake = FakeGemini(lambda: FakeReply('{"chosen_osm_id": 1, "explanation": "x"}'),
+                          checker=lambda: FakeReply('{"approved": true, "problems": []}'))
+        patches = [patch("backend.agents._safe_trails",
+                         lambda lat, lon, r: {"source": "OSM", "items": FIVE_TRAILS, "checked_at": "t"}),
+                   patch("backend.agents._gemini", lambda: (fake, "gemini-test-flash", types))]
+        if hazards is not None:
+            patches.append(patch("backend.agents.get_hazards", lambda lat, lon, r: {
+                "source": "NASA EONET", "items": hazards, "radius_km": r, "checked_at": "t"}))
+        for p in patches:
+            p.start()
+        try:
+            return agents.make_plan(text, 42.0, -83.0, osm_id=osm_id), fake
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_user_choice_replaces_the_pick_without_gemini(self):
+        result, fake = self.plan("2 km walk near Ypsilanti tomorrow", osm_id=4)  # ranked #4, outside the top 3
+        self.assertEqual(result["trail"]["name"], "Trail 4")
+        self.assertEqual(fake.calls, {"planner": 0, "checker": 0})
+        self.assertEqual(result["constraints"]["parsed_by"], "rules")
+        summaries = [e["summary"] for e in result["agent_trace"]]
+        self.assertIn("User chose Trail 4 from other options", summaries)
+        self.assertFalse([s for s in summaries if "LLM unavailable" in s or "outside the top" in s])
+        self.assertTrue(result["timing"]["sunset"])                 # timing ran
+        self.assertEqual(result["narration"][0]["kind"], "trailhead")  # narration ran
+        self.assertNotIn(4, [a["osm_id"] for a in result["alternatives"]])
+
+    def test_unknown_osm_id_plans_as_usual(self):
+        result, fake = self.plan("2 km walk near Ypsilanti tomorrow", osm_id=999)
+        self.assertEqual(result["trail"]["name"], "Trail 1")
+        self.assertEqual(fake.calls["planner"], 0)
+        self.assertIn("Requested trail osm_id 999 is not in the trail data for this area; planned as usual",
+                      [e["summary"] for e in result["agent_trace"]])
+
+    def test_late_start_on_the_chosen_trail_is_moved_not_switched(self):
+        result, _ = self.plan("2 km walk near Ypsilanti starting at 4:55 PM tomorrow", osm_id=3)
+        self.assertEqual(result["trail"]["name"], "Trail 3")
+        self.assertEqual(result["timing"]["start"], result["timing"]["latest_safe_start"])
+        self.assertTrue(result["warnings"][0].startswith("You asked to start at 16:55; moved to"))
+
+    def test_other_problems_keep_the_chosen_trail_as_warnings(self):
+        fire = {"title": "Test fire", "type": "Wildfires", "lat": COORDS[0][0], "lon": COORDS[0][1],
+                "date": "2026-11-14", "distance_km": 0.0, "source": "NASA EONET"}
+        result, _ = self.plan("2 km walk near Ypsilanti tomorrow", osm_id=2, hazards=[fire])
+        self.assertEqual(result["trail"]["name"], "Trail 2")        # not switched to another trail
+        self.assertFalse(result["checker"]["approved"])
+        self.assertTrue(any("Test fire" in w for w in result["warnings"]))
+
+
 class StartMovedTests(unittest.TestCase):
     def setUp(self):
         for name, fake in FAKE_TOOLS.items():
