@@ -614,6 +614,8 @@ def _plan(ctx):
 
     llm_constraints = (llm_answer or {}).get("constraints") if isinstance((llm_answer or {}).get("constraints"), dict) else {}
     constraints = merge_constraints(ctx.form, llm_constraints, rules, today)
+    # True when the hiker asked for a distance (form, text via Gemini, or text via rules), not the default.
+    distance_given = any(_valid_km(src.get("distance_km")) for src in (ctx.form, llm_constraints, rules))
     area = rules_area
     try:
         llm_area = (float(llm_constraints["area_lat"]), float(llm_constraints["area_lon"]))
@@ -709,6 +711,9 @@ def _plan(ctx):
     moved = _start_moved_warning(asked_start, plan["constraints"]["start"], plan["timing"], approved)
     if moved:
         warnings.insert(0, moved)
+    far = _distance_warning(plan["constraints"]["distance_km"], distance_given, trails["items"], plan["trail"])
+    if far:
+        warnings.insert(0, far)
     now = datetime.now(TZ)
     if plan["constraints"]["date"] == now.date().isoformat() and plan["constraints"]["start"] < now.strftime("%H:%M"):
         warnings.append(f"The {plan['constraints']['start']} start time has already passed today.")
@@ -821,6 +826,23 @@ def _checker_view(plan, constraints):
         for h, d in _hazards_near_route(hz, plan["trail"]["coords"], HAZARD_RADIUS_KM)][:10]
     view["constraints"] = constraints
     return view
+
+
+DISTANCE_TOLERANCE = 0.5  # a trail within ±50% of the requested distance counts as "near" it
+
+
+def _distance_warning(target_km, distance_given, trails, chosen):
+    """Warn when no trail in the area is within ±50% of the distance the hiker asked for."""
+    if not distance_given or not target_km or not trails:
+        return None
+    closest = min(trails, key=lambda t: abs(t["distance_km"] - target_km))
+    if abs(closest["distance_km"] - target_km) <= DISTANCE_TOLERANCE * target_km:
+        return None
+    text = (f"No trail near {target_km:.1f} km in this area; the closest is {closest['name']} "
+            f"({closest['distance_km']:.1f} km)")
+    if chosen and chosen.get("osm_id") != closest["osm_id"]:
+        text += f"; this plan uses {chosen['name']} ({chosen['distance_km']:.1f} km)"
+    return text + "."
 
 
 def _start_moved_warning(asked, final, timing, approved):

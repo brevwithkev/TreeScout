@@ -144,5 +144,34 @@ class StartMovedTests(unittest.TestCase):
         self.assertEqual(result["warnings"], [])
 
 
+class DistanceWarningTests(unittest.TestCase):
+    """FAKE_TOOLS has Real trail (2.2 km, a loop) and Other trail (5.0 km)."""
+
+    def setUp(self):
+        for name, fake in FAKE_TOOLS.items():
+            p = patch(f"backend.agents.{name}", fake)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.dict("os.environ", {"GEMINI_API_KEY": ""})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_warns_when_no_trail_is_within_half_the_distance(self):
+        result = agents.make_plan("20 km walk near Ypsilanti tomorrow", 42.0, -83.0)
+        far = [w for w in result["warnings"] if w.startswith("No trail near")]
+        self.assertEqual(len(far), 1, result["warnings"])
+        self.assertTrue(far[0].startswith("No trail near 20.0 km in this area; the closest is Other trail (5.0 km)"))
+        if result["trail"]["name"] != "Other trail":
+            self.assertIn(f"; this plan uses {result['trail']['name']}", far[0])
+
+    def test_no_warning_when_a_trail_is_close_enough(self):
+        result = agents.make_plan("2 km walk near Ypsilanti tomorrow", 42.0, -83.0)
+        self.assertFalse([w for w in result["warnings"] if w.startswith("No trail near")])
+
+    def test_no_warning_for_the_default_distance(self):
+        result = agents.make_plan("A walk near Ypsilanti tomorrow", 42.0, -83.0)  # default 8 km, not asked
+        self.assertFalse([w for w in result["warnings"] if w.startswith("No trail near")])
+
+
 if __name__ == "__main__":
     unittest.main()
