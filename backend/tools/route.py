@@ -1,6 +1,6 @@
 """The route a hiker walks on a trail: a loop as-is, or out-and-back on a linear trail.
 
-A trail is a loop only if its start and end are within LOOP_MAX_GAP_KM (200 m). A linear trail is walked out and
+A trail is a loop if its start and end are within LOOP_MAX_GAP_KM (500 m). A linear trail is walked out and
 back: the full route is twice its length, or, when the hiker asked for less, out to target/2 along the trail and
 back the same way. Climbing counts both directions: descending on the way out is climbing on the way back, so the
 route's climb is the sum of the positive changes over the whole out-and-back profile.
@@ -8,11 +8,19 @@ route's climb is the sum of the positive changes over the whole out-and-back pro
 
 from backend.tools.trails import haversine
 
-LOOP_MAX_GAP_KM = 0.2
+LOOP_MAX_GAP_KM = 0.5   # e.g. Rolling Hills MTB Trail (ends 0.30 km apart) and North Meadow Trail Loop (0.58 km: no)
 
 
 def is_loop(coords):
     return len(coords) >= 2 and haversine(coords[0], coords[-1]) <= LOOP_MAX_GAP_KM
+
+
+def is_partial(trail, target_km=None):
+    """True when a linear trail is turned around before its end (the hiker asked for less than out-and-back)."""
+    length = float(trail.get("trail_km") or trail.get("distance_km") or 0)
+    if is_loop(trail.get("coords") or []):
+        return False
+    return bool(target_km) and 0 < float(target_km) < 2 * length
 
 
 def route_km(trail, target_km=None):

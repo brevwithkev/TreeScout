@@ -29,9 +29,7 @@ FAR_WARNING = "No trail near"
 # (words that must all appear in the prompt, regex a warning must match, description)
 EXPECTED_WARNINGS = [
     (("4 miles", "3:30 pm"), r"sunset", "a sunset-related warning"),
-    # Out-and-back (2026-11-15): Rolling Hills MTB Trail walked out and back is 13.6 km, within 50% of 10 miles, so no
-    # distance warning any more; the 2 PM start is moved for sunset instead.
-    (("10 miles", "2 pm"), r"sunset", "a sunset-related warning"),
+    (("10 miles", "2 pm"), rf"^{FAR_WARNING} ", f"a '{FAR_WARNING} ...' distance warning"),
     (("antarctica",), r"^(No mapped trails found near|Trail data for .+ is unavailable)", "a 'no mapped trails' warning"),
 ]
 SECTIONS_WITH_SOURCE = ("weather", "climate", "space_weather")

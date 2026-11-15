@@ -1,24 +1,24 @@
 {
  "Easy 3 mile walk near Ypsilanti this Saturday morning": {
   "trail": {
-   "name": "Rolling Hills MTB Trail",
-   "osm_id": 55124390,
-   "distance_km": 4.8,
-   "elevation_gain_m": 8
+   "name": "North Meadow Trail Loop",
+   "osm_id": 411440161,
+   "distance_km": 4.67,
+   "elevation_gain_m": 24
   },
-  "coords": 541,
+  "coords": 441,
   "alternatives": [
-   {
-    "name": "North Meadow Trail Loop",
-    "osm_id": 411440161,
-    "distance_km": 2.335,
-    "score": 0.824
-   },
    {
     "name": "Yellow Trail (Central Loop)",
     "osm_id": 399341772,
     "distance_km": 3.481,
     "score": 0.74
+   },
+   {
+    "name": "Main Path",
+    "osm_id": 399341771,
+    "distance_km": 1.861,
+    "score": 0.673
    }
   ],
   "constraints": {
@@ -37,15 +37,15 @@
    "latest_safe_start": "15:40",
    "turnaround_by": "16:09"
   },
-  "explanation": "Rolling Hills MTB Trail is 4.8 km (3.0 mi), out and back (2.4 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 09:00, you should be back about 7 h 10 min before sunset (17:08).",
+  "explanation": "North Meadow Trail Loop is 4.7 km (2.9 mi), out and back (2.3 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 09:00, you should be back about 7 h 10 min before sunset (17:08).",
   "warnings": [],
   "narration": [
-   "Welcome to Rolling Hills MTB Trail, 4.8 kilometers total. Sunset is at 17:08; turn around by 16:09. Weather: Sunny, 50F.",
-   "You've hiked 1 kilometer, 3.8 to go.",
-   "You've hiked 2 kilometers, 2.8 to go.",
+   "Welcome to North Meadow Trail Loop, 4.7 kilometers total. Sunset is at 17:08; turn around by 16:09. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 3.7 to go.",
+   "You've hiked 2 kilometers, 2.7 to go.",
    "Turnaround point: head back the way you came.",
-   "You've hiked 3 kilometers, 1.8 to go.",
-   "You've hiked 4 kilometers, 0.8 to go.",
+   "You've hiked 3 kilometers, 1.7 to go.",
+   "You've hiked 4 kilometers, 0.7 to go.",
    "You're back at the trailhead."
   ],
   "checker": {
@@ -57,10 +57,10 @@
   "trail": {
    "name": "Rolling Hills MTB Trail",
    "osm_id": 55124390,
-   "distance_km": 6.4,
-   "elevation_gain_m": 11
+   "distance_km": 6.786,
+   "elevation_gain_m": 12
   },
-  "coords": 691,
+  "coords": 810,
   "alternatives": [
    {
     "name": "North Meadow Trail Loop",
@@ -78,33 +78,33 @@
   "constraints": {
    "distance_km": 6.4,
    "date": "2026-11-20",
-   "start": "15:20",
+   "start": "15:16",
    "prefs": [
     "hilly"
    ],
    "parsed_by": "rules"
   },
   "timing": {
-   "start": "15:20",
-   "est_duration_min": 78,
+   "start": "15:16",
+   "est_duration_min": 83,
    "sunset": "17:08",
-   "latest_safe_start": "15:20",
-   "turnaround_by": "15:59"
+   "latest_safe_start": "15:16",
+   "turnaround_by": "15:57"
   },
-  "explanation": "Rolling Hills MTB Trail is 6.4 km (4.0 mi), out and back (3.2 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 15:20, you should be back about 30 min before sunset (17:08).",
+  "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 15:16, you should be back about 29 min before sunset (17:08).",
   "warnings": [
-   "You asked to start at 15:30; moved to 15:20 so you finish at least 30 min before sunset (17:08)."
+   "You asked to start at 15:30; moved to 15:16 so you finish at least 30 min before sunset (17:08)."
   ],
   "narration": [
-   "Welcome to Rolling Hills MTB Trail, 6.4 kilometers total. Sunset is at 17:08; turn around by 15:59. Weather: Sunny, 50F.",
-   "You've hiked 1 kilometer, 5.4 to go.",
-   "You've hiked 2 kilometers, 4.4 to go.",
-   "You've hiked 3 kilometers, 3.4 to go.",
-   "Turnaround point: head back the way you came.",
-   "You've hiked 4 kilometers, 2.4 to go.",
-   "You've hiked 5 kilometers, 1.4 to go.",
-   "You've hiked 6 kilometers, 0.4 to go.",
-   "You're back at the trailhead."
+   "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:08; turn around by 15:57. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 5.8 to go.",
+   "You've hiked 2 kilometers, 4.8 to go.",
+   "You've hiked 3 kilometers, 3.8 to go.",
+   "Halfway. You're on schedule if it's before 15:57.",
+   "You've hiked 4 kilometers, 2.8 to go.",
+   "You've hiked 5 kilometers, 1.8 to go.",
+   "You've hiked 6 kilometers, 0.8 to go.",
+   "You've reached the end of Rolling Hills MTB Trail."
   ],
   "checker": {
    "approved": true,
@@ -113,24 +113,24 @@
  },
  "Dog-friendly loop under 5 km near Ypsilanti": {
   "trail": {
-   "name": "North Meadow Trail Loop",
-   "osm_id": 411440161,
-   "distance_km": 4.2,
-   "elevation_gain_m": 22
+   "name": "Yellow Trail (Central Loop)",
+   "osm_id": 399341772,
+   "distance_km": 3.481,
+   "elevation_gain_m": 12
   },
-  "coords": 385,
+  "coords": 330,
   "alternatives": [
    {
-    "name": "Rolling Hills MTB Trail",
-    "osm_id": 55124390,
-    "distance_km": 6.786,
-    "score": 0.842
+    "name": "Main Path",
+    "osm_id": 399341771,
+    "distance_km": 1.861,
+    "score": 0.755
    },
    {
-    "name": "Yellow Trail (Central Loop)",
-    "osm_id": 399341772,
-    "distance_km": 3.481,
-    "score": 0.814
+    "name": "North Meadow Trail Loop",
+    "osm_id": 411440161,
+    "distance_km": 2.335,
+    "score": 0.845
    }
   ],
   "constraints": {
@@ -144,18 +144,19 @@
   },
   "timing": {
    "start": "10:00",
-   "est_duration_min": 53,
+   "est_duration_min": 43,
    "sunset": "17:08",
-   "latest_safe_start": "15:46",
-   "turnaround_by": "16:12"
+   "latest_safe_start": "15:55",
+   "turnaround_by": "16:17"
   },
-  "explanation": "North Meadow Trail Loop is 4.2 km (2.6 mi), out and back (2.1 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 15 min before sunset (17:08).",
+  "explanation": "Yellow Trail (Central Loop) is 3.5 km (2.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 25 min before sunset (17:08).",
   "warnings": [],
   "narration": [
-   "Welcome to North Meadow Trail Loop, 4.2 kilometers total. Sunset is at 17:08; turn around by 16:12. Weather: Sunny, 50F.",
-   "You've hiked 1 kilometer, 3.2 to go.",
-   "Turnaround point: head back the way you came.",
-   "You've hiked 3 kilometers, 1.2 to go.",
+   "Welcome to Yellow Trail (Central Loop), 3.5 kilometers total. Sunset is at 17:08; turn around by 16:17. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 2.5 to go.",
+   "Halfway. You're on schedule if it's before 16:17.",
+   "You've hiked 2 kilometers, 1.5 to go.",
+   "You've hiked 3 kilometers, 0.5 to go.",
    "You're back at the trailhead."
   ],
   "checker": {
@@ -167,10 +168,10 @@
   "trail": {
    "name": "Rolling Hills MTB Trail",
    "osm_id": 55124390,
-   "distance_km": 13.572,
-   "elevation_gain_m": 24
+   "distance_km": 6.786,
+   "elevation_gain_m": 12
   },
-  "coords": 1619,
+  "coords": 810,
   "alternatives": [
    {
     "name": "Yellow Trail (Central Loop)",
@@ -188,66 +189,59 @@
   "constraints": {
    "distance_km": 16.1,
    "date": "2026-11-20",
-   "start": "13:53",
+   "start": "14:00",
    "prefs": [
     "hilly"
    ],
    "parsed_by": "rules"
   },
   "timing": {
-   "start": "13:53",
-   "est_duration_min": 165,
+   "start": "14:00",
+   "est_duration_min": 83,
    "sunset": "17:08",
-   "latest_safe_start": "13:53",
-   "turnaround_by": "15:16"
+   "latest_safe_start": "15:16",
+   "turnaround_by": "15:57"
   },
-  "explanation": "Rolling Hills MTB Trail is 13.6 km (8.4 mi), out and back (6.8 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 13:53, you should be back about 30 min before sunset (17:08).",
+  "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), a loop, ranked #1 of 27 trails nearby. Starting at 14:00, you should be back about 1 h 45 min before sunset (17:08).",
   "warnings": [
-   "You asked to start at 14:00; moved to 13:53 so you finish at least 30 min before sunset (17:08)."
+   "No trail near 16.1 km in this area; the closest is Rolling Hills MTB Trail (6.8 km)."
   ],
   "narration": [
-   "Welcome to Rolling Hills MTB Trail, 13.6 kilometers total. Sunset is at 17:08; turn around by 15:16. Weather: Sunny, 50F.",
-   "You've hiked 1 kilometer, 12.6 to go.",
-   "You've hiked 2 kilometers, 11.6 to go.",
-   "You've hiked 3 kilometers, 10.6 to go.",
-   "You've hiked 4 kilometers, 9.6 to go.",
-   "You've hiked 5 kilometers, 8.6 to go.",
-   "You've hiked 6 kilometers, 7.6 to go.",
-   "Turnaround point: head back the way you came.",
-   "You've hiked 7 kilometers, 6.6 to go.",
-   "You've hiked 8 kilometers, 5.6 to go.",
-   "You've hiked 9 kilometers, 4.6 to go.",
-   "You've hiked 10 kilometers, 3.6 to go.",
-   "You've hiked 11 kilometers, 2.6 to go.",
-   "You've hiked 12 kilometers, 1.6 to go.",
-   "You've hiked 13 kilometers, 0.6 to go.",
-   "You're back at the trailhead."
+   "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:08; turn around by 15:57. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 5.8 to go.",
+   "You've hiked 2 kilometers, 4.8 to go.",
+   "You've hiked 3 kilometers, 3.8 to go.",
+   "Halfway. You're on schedule if it's before 15:57.",
+   "You've hiked 4 kilometers, 2.8 to go.",
+   "You've hiked 5 kilometers, 1.8 to go.",
+   "You've hiked 6 kilometers, 0.8 to go.",
+   "You've reached the end of Rolling Hills MTB Trail."
   ],
   "checker": {
    "approved": true,
-   "rounds": 2
+   "rounds": 1
   }
  },
  "A 5 km walk tomorrow": {
   "trail": {
-   "name": "Rolling Hills MTB Trail",
-   "osm_id": 55124390,
-   "distance_km": 5.0,
-   "elevation_gain_m": 9
+   "name": "North Meadow Trail Loop",
+   "osm_id": 411440161,
+   "distance_km": 4.67,
+   "elevation_gain_m": 24
   },
-  "coords": 577,
+  "coords": 441,
   "alternatives": [
-   {
-    "name": "North Meadow Trail Loop",
-    "osm_id": 411440161,
-    "distance_km": 2.335,
-    "score": 0.793
-   },
    {
     "name": "Yellow Trail (Central Loop)",
     "osm_id": 399341772,
     "distance_km": 3.481,
     "score": 0.709
+   },
+   {
+    "name": "Rolling Hills MTB Trail",
+    "osm_id": 55124390,
+    "distance_km": 6.786,
+    "score": 0.664
    }
   ],
   "constraints": {
@@ -259,20 +253,20 @@
   },
   "timing": {
    "start": "10:00",
-   "est_duration_min": 61,
+   "est_duration_min": 58,
    "sunset": "17:08",
-   "latest_safe_start": "15:37",
-   "turnaround_by": "16:08"
+   "latest_safe_start": "15:40",
+   "turnaround_by": "16:09"
   },
-  "explanation": "Rolling Hills MTB Trail is 5.0 km (3.1 mi), out and back (2.5 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 07 min before sunset (17:08).",
+  "explanation": "North Meadow Trail Loop is 4.7 km (2.9 mi), out and back (2.3 km out, then back the same way), ranked #1 of 27 trails nearby. Starting at 10:00, you should be back about 6 h 10 min before sunset (17:08).",
   "warnings": [],
   "narration": [
-   "Welcome to Rolling Hills MTB Trail, 5.0 kilometers total. Sunset is at 17:08; turn around by 16:08. Weather: Sunny, 50F.",
-   "You've hiked 1 kilometer, 4 to go.",
-   "You've hiked 2 kilometers, 3 to go.",
+   "Welcome to North Meadow Trail Loop, 4.7 kilometers total. Sunset is at 17:08; turn around by 16:09. Weather: Sunny, 50F.",
+   "You've hiked 1 kilometer, 3.7 to go.",
+   "You've hiked 2 kilometers, 2.7 to go.",
    "Turnaround point: head back the way you came.",
-   "You've hiked 3 kilometers, 2 to go.",
-   "You've hiked 4 kilometers, 1 to go.",
+   "You've hiked 3 kilometers, 1.7 to go.",
+   "You've hiked 4 kilometers, 0.7 to go.",
    "You're back at the trailhead."
   ],
   "checker": {

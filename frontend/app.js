@@ -343,6 +343,13 @@ function divIcon(cls, glyph, size = 24) {
   });
 }
 
+/** [lat, lon] of plan.place (where the plan is), or null (older plans, or the place wasn't found). */
+function placeOf(plan) {
+  const p = isObj(plan) && isObj(plan.place) ? plan.place : null;
+  const lat = p ? toNum(p.lat) : NaN, lon = p ? toNum(p.lon) : NaN;
+  return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+}
+
 function drawTrail(coords, name, trail = null) {
   if (!map) return;
   routeLayer.clearLayers();
@@ -358,7 +365,7 @@ function drawTrail(coords, name, trail = null) {
 
   const start = coords[0];
   const end = coords[coords.length - 1];
-  const loop = haversineKm(start, end) < 0.05 && !outAndBack;
+  const loop = !outAndBack && (isObj(trail) && trail.route ? trail.route === "loop" : haversineKm(start, end) < 0.05);
   const turnIndex = outAndBack ? toNum(trail.turnaround_index) : NaN;
   if (outAndBack && Number.isInteger(turnIndex) && coords[turnIndex]) {
     L.marker(coords[turnIndex], { icon: divIcon("marker--end", "T"), title: `Turnaround: ${name}` })
@@ -457,9 +464,11 @@ function renderPlan(plan, mock) {
   const coords = validCoords(plan.trail);
   const trailName = (isObj(plan.trail) && str(plan.trail.name)) || "Trail";
   drawTrail(coords, trailName, isObj(plan.trail) ? plan.trail : null);
+  const where = placeOf(plan);
+  if (!coords && where && map) map.setView(where, 10); // no trail: show where the plan is, not the last route
   hikeLoad(plan, coords); // resets any running simulation and pre-fetches narration audio
 
-  const hazards = renderHazards(plan, coords ? coords[0] : DEFAULT_CENTER); // {eonet, serious}
+  const hazards = renderHazards(plan, coords ? coords[0] : where || DEFAULT_CENTER); // {eonet, serious}
   renderSources(plan);
   renderModeBadges(plan, mock);
 

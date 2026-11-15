@@ -54,5 +54,6 @@
                "Firearm deer season: Wear blaze orange; hunters are common near state game areas.",
                "Freezing temperatures: Down to 31F during your hike; watch for icy boardwalks.",
                "Unusual conditions: About 9F colder than normal for this week (forecast high 38F vs normal 47F); dress for it."],
-  "flood_or_burn_layer": null
+  "flood_or_burn_layer": null,
+  "place": {"name": "Ann Arbor", "lat": 42.2808, "lon": -83.743}
 }

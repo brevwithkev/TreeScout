@@ -55,6 +55,8 @@ NOT_FOUND = "Couldn't find {place}"
 LOOKUP_DOWN = "Couldn't find {place} (the place lookup is unavailable right now; try again)"
 NO_TRAILS = "No mapped trails found near {place}"
 ELEVATION_UNKNOWN = "Elevation unknown: the time estimate may be far too short on steep trails"
+STRENUOUS_CLIMB_M = 1000   # more climbing than this, or a longer route than STRENUOUS_HOURS: a warning (never a rejection)
+STRENUOUS_HOURS = 6
 MOUNTAINOUS_RANGE_M = 300  # nearby trails spanning more than this: elevation is required to approve a trail
 # Words too generic to show that the request names Gemini's place ("Ann Arbor" for "I want to take a hike").
 GENERIC_PLACE_WORDS = {"the", "and", "of", "park", "national", "state", "provincial", "trail", "trails", "trailhead",
@@ -1114,7 +1116,23 @@ def _advisories(plan):
     trail = plan.get("trail")
     if isinstance(trail, dict) and "elevation_gain_m" in trail and trail["elevation_gain_m"] is None:
         out.append(ELEVATION_UNKNOWN)
+    strenuous = _strenuous(trail, plan.get("timing"))
+    if strenuous:
+        out.append(strenuous)
     return out
+
+
+def _strenuous(trail, timing):
+    """"Strenuous: 1898 m of climbing, about 8.2 h; carry water and a headlamp" for a big route, else None."""
+    if not isinstance(trail, dict):
+        return None
+    climb = trail.get("elevation_gain_m")
+    minutes = None if _failed(timing) or not isinstance(timing, dict) else timing.get("est_duration_min")
+    if not ((climb or 0) > STRENUOUS_CLIMB_M or (minutes or 0) > STRENUOUS_HOURS * 60):
+        return None
+    climbing = f"{climb} m of climbing" if climb is not None else "unknown climbing"
+    hours = f"about {minutes / 60:.1f} h" if minutes else "a long day"
+    return f"Strenuous: {climbing}, {hours}; carry water and a headlamp"
 
 
 def _checker_view(plan, constraints):
@@ -1322,6 +1340,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "narration": [],
         "warnings": warnings,
         "flood_or_burn_layer": None,
+        "place": ctx.place_out,  # {name, lat, lon}: where the plan is (the map centers here without a trail); null if not found
     }
     result["narration"] = generate_narration(result)
     return result

@@ -24,9 +24,9 @@ LINE = [[36.0, -112.0], [36.01, -112.0], [36.02, -112.0]]   # 2.2 km straight no
 
 
 class RouteTests(unittest.TestCase):
-    def test_loop_only_within_200_m(self):
-        self.assertTrue(route.is_loop([[42.0, -83.0], [42.01, -83.0], [42.0015, -83.0]]))   # 167 m gap
-        self.assertFalse(route.is_loop([[42.0, -83.0], [42.01, -83.0], [42.0025, -83.0]]))  # 278 m gap
+    def test_loop_only_within_500_m(self):
+        self.assertTrue(route.is_loop([[42.0, -83.0], [42.01, -83.0], [42.0044, -83.0]]))   # 489 m gap
+        self.assertFalse(route.is_loop([[42.0, -83.0], [42.01, -83.0], [42.0046, -83.0]]))  # 511 m gap
 
     def test_full_out_and_back(self):
         r = route.make_route({"coords": LINE, "distance_km": 2.224}, target_km=10)
@@ -61,6 +61,23 @@ class RouteTests(unittest.TestCase):
     def test_ranks_by_the_distance_walked(self):
         self.assertEqual(route.route_km({"coords": LINE, "distance_km": 2.224}), 4.448)
         self.assertEqual(route.route_km({"coords": LINE, "distance_km": 2.224}, 3.0), 3.0)
+        self.assertTrue(route.is_partial({"coords": LINE, "distance_km": 2.224}, 3.0))
+        self.assertFalse(route.is_partial({"coords": LINE, "distance_km": 2.224}, 5.0))   # full out-and-back
+
+    def test_complete_trails_beat_partial_turnarounds_unless_30_percent_further(self):
+        from backend.tools.ranking import rank_trails
+        long_line = {"name": "Long", "osm_id": 1, "distance_km": 10.0,
+                     "coords": [[36.0, -112.0], [36.09, -112.0]]}        # partial: turned around at target/2
+        def loop(km, osm_id):  # a square loop of about km, starting at the same point
+            side = km / 4 / 111.0
+            return {"name": f"Loop {km}", "osm_id": osm_id, "distance_km": km,
+                    "coords": [[36.0, -112.0], [36.0 + side, -112.0], [36.0 + side, -112.0 + side * 1.24],
+                               [36.0, -112.0 + side * 1.24], [36.0, -112.0]]}
+        ranked = rank_trails([long_line, loop(6.0, 2)], {"distance_km": 8.0}, 36.0, -112.0)   # loop 25% off
+        self.assertEqual(ranked[0]["name"], "Loop 6.0")
+        ranked = rank_trails([long_line, loop(4.0, 3)], {"distance_km": 8.0}, 36.0, -112.0)   # loop 50% off
+        self.assertEqual(ranked[0]["name"], "Long")
+        self.assertTrue(ranked[0]["partial"])
 
 
 class BrightAngelTests(unittest.TestCase):
@@ -148,6 +165,49 @@ class ElevationUnknownTests(unittest.TestCase):
                                       form={"date": DATE})
         self.assertTrue(result["checker"]["approved"])
         self.assertIn(agents.ELEVATION_UNKNOWN, result["warnings"])
+
+
+class StrenuousTests(unittest.TestCase):
+    def test_strenuous_warning(self):
+        self.assertEqual(agents._strenuous({"elevation_gain_m": 1898}, {"est_duration_min": 491}),
+                         "Strenuous: 1898 m of climbing, about 8.2 h; carry water and a headlamp")
+        self.assertEqual(agents._strenuous({"elevation_gain_m": 200}, {"est_duration_min": 390}),
+                         "Strenuous: 200 m of climbing, about 6.5 h; carry water and a headlamp")
+        self.assertIsNone(agents._strenuous({"elevation_gain_m": 1000}, {"est_duration_min": 360}))  # not more than
+        self.assertEqual(agents._strenuous({"elevation_gain_m": None}, {"est_duration_min": 400}),
+                         "Strenuous: unknown climbing, about 6.7 h; carry water and a headlamp")
+        self.assertIsNone(agents._strenuous(None, None))
+
+    def test_bright_angel_is_strenuous_but_approved(self):
+        result = BrightAngelTests.plan(self, "A 30 km hike at the Grand Canyon starting at 1 PM tomorrow")
+        self.assertTrue(result["checker"]["approved"])
+        self.assertIn("Strenuous: 1898 m of climbing, about 8.2 h; carry water and a headlamp", result["warnings"])
+        easy = BrightAngelTests.plan(self, "A 2 km hike at the Grand Canyon tomorrow")
+        self.assertFalse([w for w in easy["warnings"] if w.startswith("Strenuous")])
+
+
+class PlaceTests(unittest.TestCase):
+    def test_place_is_where_the_plan_is(self):
+        with Offline(overpass=None, nominatim=GC_NOMINATIM):
+            gc = agents.make_plan("A hike at the Grand Canyon tomorrow", 42.2411, -83.6130, form={"date": DATE})
+        self.assertEqual(gc["place"], {"name": "Grand Canyon", "lat": 36.098, "lon": -112.0963})
+        with Offline(overpass=None, nominatim={}):
+            home = agents.make_plan("A 5 km walk tomorrow", 42.2411, -83.6130, form={"date": DATE})
+        self.assertEqual(home["place"], {"name": None, "lat": 42.2411, "lon": -83.613})
+
+    def test_place_without_a_trail_and_when_not_found(self):
+        with Offline(overpass=None, nominatim={"Grand Canyon South Rim": fixture("nominatim_grand_canyon.json"),
+                                               "Xyzzyville": []}):
+            down = agents.make_plan("A hike near Grand Canyon South Rim tomorrow", 42.2411, -83.6130,
+                                    form={"date": DATE})
+            missing = agents.make_plan("A walk near Xyzzyville tomorrow", 42.2411, -83.6130, form={"date": DATE})
+        self.assertIsNone(down["trail"])                                   # Overpass down, no seed nearby
+        self.assertEqual(down["place"], {"name": "Grand Canyon South Rim", "lat": 36.0255, "lon": -113.8321})
+        self.assertIsNone(missing["place"])
+
+    def test_contract_example(self):
+        contract = json.loads((Path(__file__).resolve().parents[1] / "mock_plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(contract["place"]), {"name", "lat", "lon"})
 
 
 class SeedElevationCacheTests(unittest.TestCase):
