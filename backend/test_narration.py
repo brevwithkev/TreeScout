@@ -95,6 +95,19 @@ class TopHazardTests(unittest.TestCase):
         extra = self.extra_words(seasonal={"source": "x", "items": [self.DEER]})
         self.assertEqual(extra, "Deer season: wear orange.")
 
+    def test_climate_anomaly_line(self):
+        unusual = [{"title": "Unusual conditions", "advice": "a", "source": "NWS vs NASA POWER 2006-2025"}]
+        def line(**anomaly):
+            return self.extra_words(conditions=unusual, climate_anomaly={
+                "source": "NWS vs NASA POWER 2006-2025", "notable": True, "summary": "s",
+                "temp_diff_f": anomaly.get("diff", 0), "rain_flag": anomaly.get("rain", False)})
+        self.assertEqual(line(diff=-9), "About 9F colder than normal: dress warm.")
+        self.assertEqual(line(rain=True), "Rain likelier than normal for this week.")
+        self.assertEqual(line(diff=-12, rain=True), "About 12F colder and wetter than normal: dress warm.")
+        for text in (line(diff=-9), line(rain=True), line(diff=-12, rain=True)):
+            self.assertLess(len(text.split()), 12)
+        self.assertEqual(self.extra_words(conditions=unusual), "Unusual conditions.")  # no climate_anomaly section
+
     def test_priority_and_word_limit(self):
         severe = {"event": "Severe Thunderstorm Warning", "severity": "Severe", "headline": "h"}
         moderate = {"event": "Winter Weather Advisory", "severity": "Moderate", "headline": "h"}

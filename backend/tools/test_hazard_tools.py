@@ -199,6 +199,17 @@ class ClimateAnomalyTests(unittest.TestCase):
             "advice": "About 9F colder than normal for this week (forecast high 40F vs normal 49F); dress for it",
             "source": "NWS vs NASA POWER 2006-2025"})
 
+    def test_notably_warmer_is_notable_but_not_a_warning(self):
+        found = anomaly.compare_climate({**COLD, "max_temp_f": 59}, POWER)   # 59F vs 48.9F
+        self.assertEqual((found["temp_diff_f"], found["notable"], found["summary"]),
+                         (10, True, "About 10F warmer than normal for this week"))
+        self.assertFalse(anomaly.warns(found))
+        self.assertIsNone(anomaly.anomaly_condition(found))
+        wet = anomaly.compare_climate({**COLD, "max_temp_f": 59, "max_precip_chance": 60}, {**POWER, "avg_precip_mm": 1})
+        self.assertTrue(anomaly.warns(wet))                                     # warm but wet: rain warns
+        self.assertEqual(anomaly.anomaly_condition(anomaly.compare_climate({**COLD, "max_temp_f": 41}, POWER))["title"],
+                         "Unusual conditions")                                 # exactly 8F colder warns
+
     def test_3f_warmer_is_typical(self):
         found = anomaly.compare_climate({**COLD, "max_temp_f": 52}, POWER)
         self.assertEqual((found["temp_diff_f"], found["notable"], found["summary"]), (3, False, "Typical for this week"))

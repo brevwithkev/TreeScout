@@ -78,9 +78,15 @@ def compare_climate(hike_window, climate):
         return unavailable(source, f"{type(exc).__name__}: {exc}")
 
 
+def warns(anomaly):
+    """Notably colder (temp_diff_f <= -8) or rain in a dry week: a warning. Notably warmer only shows on the card."""
+    return (not _failed(anomaly) and bool(anomaly.get("notable"))
+            and (anomaly.get("rain_flag") is True or (anomaly.get("temp_diff_f") or 0) <= -NOTABLE_TEMP_F))
+
+
 def anomaly_condition(anomaly):
-    """The trail-conditions item for a notable anomaly, else None."""
-    if _failed(anomaly) or not anomaly.get("notable"):
+    """The trail-conditions item when the anomaly warns (see warns), else None."""
+    if not warns(anomaly):
         return None
     return {"title": "Unusual conditions", "advice": f"{anomaly['summary']} ({anomaly['basis']}); dress for it",
             "source": anomaly["source"]}

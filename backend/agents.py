@@ -885,7 +885,7 @@ def _assemble(ctx, trail, constraints, area):
     window = ctx.hike_window(area, constraints["date"], timing).result()
     anomaly = ctx.tools.call("compare_climate", compare_climate, window, climate.result())
     conditions = ctx.tools.call("derive_conditions", derive_conditions, timing, window)
-    unusual = anomaly_condition(anomaly)  # notable only; a warning via _advisories, never a rejection
+    unusual = anomaly_condition(anomaly)  # colder or wetter only; a warning via _advisories, never a rejection
     if unusual:
         conditions = [*conditions, unusual]
     return {

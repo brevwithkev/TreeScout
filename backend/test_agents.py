@@ -430,6 +430,18 @@ class HazardCheckerTests(unittest.TestCase):
                       "46F); dress for it.", result["warnings"])
         self.assertFalse(self.rejections(result))
 
+    def test_unusual_warmth_shows_without_a_warning(self):
+        result = self.plan(window={"min_temp_f": 52, "max_temp_f": 57})  # 57F vs normal high 46.4F: 11F warmer
+        self.assertEqual(result["climate_anomaly"]["summary"], "About 11F warmer than normal for this week")
+        self.assertTrue(result["climate_anomaly"]["notable"])
+        self.assertNotIn("Unusual conditions", [c["title"] for c in result["conditions"]])
+        self.assertFalse([w for w in result["warnings"] if w.startswith("Unusual conditions")])
+
+    def test_unusual_cold_is_spoken_at_the_trailhead(self):
+        result = self.plan(window={"min_temp_f": 33, "max_temp_f": 37})
+        self.assertTrue(result["narration"][0]["text"].endswith("About 9F colder than normal: dress warm."),
+                        result["narration"][0]["text"])
+
     def test_missing_power_gives_an_unavailable_anomaly(self):
         with patch("backend.agents.get_climate", lambda lat, lon, d: {"available": False, "source": "NASA POWER",
                                                                       "error": "timed out"}):

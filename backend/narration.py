@@ -70,6 +70,21 @@ CONDITION_PHRASES = {
 }
 
 
+def anomaly_phrase(anomaly):
+    """Trailhead line for an "Unusual conditions" item, from plan["climate_anomaly"]; None if it can't say more."""
+    if not isinstance(anomaly, dict) or anomaly.get("available") is False:
+        return None
+    diff, rain = anomaly.get("temp_diff_f"), anomaly.get("rain_flag") is True
+    cold = isinstance(diff, (int, float)) and diff <= -8
+    if cold and rain:
+        return f"About {abs(int(diff))}F colder and wetter than normal: dress warm."
+    if cold:
+        return f"About {abs(int(diff))}F colder than normal: dress warm."
+    if rain:
+        return "Rain likelier than normal for this week."
+    return None
+
+
 def _limit_words(text, n=TOP_HAZARD_MAX_WORDS):
     words = text.split()
     return text if len(words) <= n else " ".join(words[:n]).rstrip(",;:") + "."
@@ -98,7 +113,9 @@ def top_hazard_phrase(plan):
         phrase = narration_phrase(title) or f"{title}."
     elif conditions and isinstance(conditions[0], dict):
         title = conditions[0].get("title") or "Trail conditions"
-        phrase = CONDITION_PHRASES.get(title) or f"{title}."
+        if title == "Unusual conditions":
+            phrase = anomaly_phrase(plan.get("climate_anomaly"))
+        phrase = phrase or CONDITION_PHRASES.get(title) or f"{title}."
     return _limit_words(phrase) if phrase else None
 
 
