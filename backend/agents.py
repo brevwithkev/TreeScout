@@ -50,9 +50,9 @@ LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it reje
 LLM_CALL_TIMEOUT_S = 10       # we stop waiting after this and fall back (fail fast on an overloaded model)
 OVERLOAD_CODES = (429, 503, 504)
 PLANNER_MAX_TURNS = 6
-PLANNER_BUDGET_S = 14     # after this the rule-based planner finishes the job
-CHECKER_SKIP_AFTER_S = 15  # skip the LLM checker (Python checks still run) to stay near 20 s
-REVISE_WITH_LLM_BEFORE_S = 12  # later than this, checker feedback is handled by the rule-based reviser
+# No Gemini call (planner turn, checker, revision) starts after this; each is cut off at
+# LLM_CALL_TIMEOUT_S, so the last one ends by about 9 + 10 = 19 s and /plan stays under 20 s.
+LLM_START_DEADLINE_S = 9
 PREFETCH_WAIT_S = 3  # prefetched non-trail results the planner sees; slower ones are left to the planner
 
 PLACES = {  # town -> (lat, lon); the rule-based area parser
@@ -418,8 +418,8 @@ class Planner:
     def run(self, message):
         types = self.types
         for _ in range(PLANNER_MAX_TURNS):
-            if self.ctx.elapsed() > PLANNER_BUDGET_S:
-                raise LLMUnavailable(f"planner over its {PLANNER_BUDGET_S} s budget")
+            if self.ctx.elapsed() > LLM_START_DEADLINE_S:
+                raise LLMUnavailable(f"planner turn would start after {LLM_START_DEADLINE_S} s")
             reply = _llm_call(self.ctx, lambda m=message: self.chat.send_message(m), "planner")
             calls = reply.function_calls or []
             if not calls:
@@ -675,7 +675,7 @@ def _plan(ctx):
         llm_ok, llm_problems, llm_checked = True, [], False
         if parsed_by == "gemini" and ctx.llm_down:
             trace.add("checker", "fallback", "Gemini failed earlier in this request; used Python safety checks only")
-        elif parsed_by == "gemini" and ctx.elapsed() < CHECKER_SKIP_AFTER_S:
+        elif parsed_by == "gemini" and ctx.elapsed() <= LLM_START_DEADLINE_S:
             try:
                 llm_ok, llm_problems = llm_check(ctx, _checker_view(plan, constraints))
                 llm_checked = True
@@ -686,7 +686,8 @@ def _plan(ctx):
                 logger.warning("LLM checker unavailable: %s", exc)
                 trace.add("checker", "fallback", "LLM checker unavailable, used Python safety checks only")
         elif parsed_by == "gemini":
-            trace.add("checker", "fallback", "Skipped LLM checker to stay within the time budget; Python checks only")
+            trace.add("checker", "fallback", f"Skipped the Gemini checker: more than {LLM_START_DEADLINE_S} s had "
+                                             "passed, so /plan stays under 20 s. Python checks only.")
         approved = approved and llm_ok
         all_problems = problems + [p for p in llm_problems if p not in problems]
         attempts.append((plan, all_problems, approved, answer))
@@ -872,8 +873,9 @@ def _approval_line(plan):
 
 def _revise(ctx, planner, problems, plan, ranked, rejected, constraints):
     """Ask the LLM planner for a different trail or start time; fall back to rules. Returns (answer, constraints)."""
-    if planner is not None and ctx.elapsed() >= REVISE_WITH_LLM_BEFORE_S:
-        ctx.trace.add("planner", "fallback", "Skipped Gemini revision to stay within the time budget; "
+    if planner is not None and not ctx.llm_down and ctx.elapsed() > LLM_START_DEADLINE_S:
+        ctx.trace.add("planner", "fallback", f"Skipped the Gemini revision: more than {LLM_START_DEADLINE_S} s had "
+                                             "passed, so /plan stays under 20 s; "
                                              "used the rule-based reviser")
     elif planner is not None and not ctx.llm_down:
         try:

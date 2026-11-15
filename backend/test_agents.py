@@ -115,6 +115,48 @@ class FailFastTests(unittest.TestCase):
         self.assertTrue(result["checker"]["approved"])
 
 
+class TimeBudgetTests(unittest.TestCase):
+    """No Gemini call starts after LLM_START_DEADLINE_S, so /plan stays under 20 s."""
+
+    setUp = FailFastTests.setUp            # fake tools
+    run_plan = FailFastTests.run_plan      # fake Gemini client, timed make_plan
+
+    ANSWER = json.dumps({"chosen_osm_id": 11, "explanation": "Real trail is 2.2 km (1.4 mi).",
+                         "constraints": {"distance_km": 2, "start": "10:00"}})
+
+    def test_budget_adds_up_to_under_20_seconds(self):
+        self.assertEqual(agents.LLM_START_DEADLINE_S, 9)
+        self.assertLess(agents.LLM_START_DEADLINE_S + agents.LLM_CALL_TIMEOUT_S, 20)
+
+    def test_checker_is_skipped_when_the_start_deadline_has_passed(self):
+        def slow_planner():
+            time.sleep(0.3)  # finishes after the (patched) 0.2 s deadline
+            return FakeReply(self.ANSWER)
+        fake = FakeGemini(slow_planner, checker=lambda: FakeReply('{"approved": true, "problems": []}'))
+        with patch.object(agents, "LLM_START_DEADLINE_S", 0.2):
+            result, _ = self.run_plan(fake)
+        self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+        self.assertEqual(fake.calls, {"planner": 1, "checker": 0})
+        summaries = [e["summary"] for e in result["agent_trace"]]
+        self.assertIn("Skipped the Gemini checker: more than 0.2 s had passed, so /plan stays under 20 s. "
+                      "Python checks only.", summaries)
+        self.assertTrue(result["checker"]["approved"])  # Python checks still ran
+
+    def test_checker_runs_when_within_the_deadline(self):
+        fake = FakeGemini(lambda: FakeReply(self.ANSWER),
+                          checker=lambda: FakeReply('{"approved": true, "problems": []}'))
+        result, _ = self.run_plan(fake)
+        self.assertEqual(fake.calls, {"planner": 1, "checker": 1})
+        self.assertFalse([e for e in result["agent_trace"] if "Skipped the Gemini" in e["summary"]])
+
+    def test_planner_turn_is_not_started_after_the_deadline(self):
+        fake = FakeGemini(lambda: FakeReply(self.ANSWER))
+        with patch.object(agents, "LLM_START_DEADLINE_S", 0):
+            result, _ = self.run_plan(fake)
+        self.assertEqual(result["constraints"]["parsed_by"], "rules")
+        self.assertEqual(fake.calls["planner"], 0)
+
+
 class StartMovedTests(unittest.TestCase):
     def setUp(self):
         for name, fake in FAKE_TOOLS.items():
