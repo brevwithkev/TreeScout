@@ -26,7 +26,7 @@ FAKE_TOOLS = {
         "source": "NWS hourly", "window": "10:00-10:30", "max_precip_chance": 10, "min_temp_f": 45, "max_temp_f": 50,
         "max_wind_mph": 5, "conditions": ["Sunny"], "summary": "During your hike: 10% rain, 45-50F, wind 5 mph",
         "checked_at": "t"},
-    "get_seasonal_hazards": lambda d, lat, lon: {"source": "TreeScout seasonal calendar", "items": [], "checked_at": "t"},
+    "get_seasonal_hazards": lambda d, lat, lon: {"source": "TrekChek seasonal calendar", "items": [], "checked_at": "t"},
 }
 
 
@@ -392,7 +392,7 @@ class HazardCheckerTests(unittest.TestCase):
                                                                      "checked_at": "t"}),
             patch("backend.agents.get_hike_window", lambda *a: fake_window),
             patch("backend.agents.get_seasonal_hazards", lambda d, lat, lon: {
-                "source": "TreeScout seasonal calendar", "items": list(seasonal), "checked_at": "t"}),
+                "source": "TrekChek seasonal calendar", "items": list(seasonal), "checked_at": "t"}),
             patch("backend.agents.get_weather", lambda lat, lon, d: {
                 "source": "NWS", "summary": "Rain, 50F", "precip_chance": daily_precip, "checked_at": "t"}),
         ]

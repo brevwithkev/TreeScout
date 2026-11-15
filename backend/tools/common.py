@@ -1,4 +1,4 @@
-"""Shared helpers for TreeScout data tools: HTTP JSON, timestamps, and failure results."""
+"""Shared helpers for TrekChek data tools: HTTP JSON, timestamps, and failure results."""
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -16,7 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-USER_AGENT = "TreeScout hackathon (contact: treescout-team)"
+USER_AGENT = "TrekChek hackathon (contact: trekchek-team)"
 logger = logging.getLogger("treescout.tools")
 
 

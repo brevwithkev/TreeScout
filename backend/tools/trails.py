@@ -20,7 +20,7 @@ OVERPASS_ENDPOINTS = (
     "https://overpass.kumi.systems/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
-USER_AGENT = "TreeScout hackathon (contact: treescout-team)"  # the example.com placeholder got HTTP 406
+USER_AGENT = "TrekChek hackathon (contact: trekchek-team)"  # the example.com placeholder got HTTP 406
 ROOT = Path(__file__).resolve().parents[2]
 DISK_CACHE_DIR = ROOT / "data" / "overpass_cache"
 SNAPSHOT_DIR = ROOT / "data" / "trail_snapshots"  # anywhere: one successful lookup per place, kept forever

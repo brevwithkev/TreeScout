@@ -1,4 +1,4 @@
-"""TreeScout planner + checker agents.
+"""TrekChek planner + checker agents.
 
 Flow for every POST /plan:
   1. Parse the request with rules (instant) and prefetch independent tool calls concurrently.
@@ -403,7 +403,7 @@ def _json_from_text(text):
 
 PLANNER_TOOLS = [
     ("get_trails", "Named hiking trails >= 1 km near a place (OpenStreetMap). Give the place NAME as written in the "
-                   "request (e.g. \"Banff, Alberta\"); TreeScout looks it up. Call first.",
+                   "request (e.g. \"Banff, Alberta\"); TrekChek looks it up. Call first.",
      {"place": "string"}, ["place"]),
     ("rank_trails", "Score the trails from get_trails against the constraints (0-1), around the last get_trails place.",
      {"distance_km": "number", "prefs": "array"}, ["distance_km"]),
@@ -432,15 +432,15 @@ def _declarations(types):
     return [types.Tool(function_declarations=decls)]
 
 
-PLANNER_PROMPT = """You are the TreeScout planner. You plan day hikes anywhere OpenStreetMap has mapped trails.
-Today is {today} ({weekday}). Times are local to the place. If the request names no place, TreeScout searches around the
+PLANNER_PROMPT = """You are the TrekChek planner. You plan day hikes anywhere OpenStreetMap has mapped trails.
+Today is {today} ({weekday}). Times are local to the place. If the request names no place, TrekChek searches around the
 hiker's location ({lat}, {lon}).
 
 Steps:
-1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), and place: the place NAME the request mentions, as a search string (e.g. "Grand Canyon South Rim", "Banff, Alberta"), or null if it names none. Never give coordinates: TreeScout looks the name up.
+1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), and place: the place NAME the request mentions, as a search string (e.g. "Grand Canyon South Rim", "Banff, Alberta"), or null if it names none. Never give coordinates: TrekChek looks the name up.
    These form values were set explicitly by the user and override the text: {form}
 2. If get_trails finds no trails (or the place cannot be found), answer with "chosen_osm_id": null.
-3. TreeScout has already run the tools for the area and constraints it guessed from the request; their results are in the
+3. TrekChek has already run the tools for the area and constraints it guessed from the request; their results are in the
    first message ("prefetched"). Use them. Call tools only for what is missing or different: another place (get_trails, then
    rank_trails), different constraints (rank_trails), or timing for another trail or start time (compute_timing).
    Put independent calls in the same turn. If the prefetched results answer the request, reply right away.
@@ -454,7 +454,7 @@ Steps:
 Rules: every number in the explanation must come from a tool result, never from memory. The explanation must name the chosen
 trail and its distance in km and miles. There is no data about shade or dog rules: never claim a trail is shaded or dog-friendly."""
 
-CHECKER_PROMPT = """You are the TreeScout safety checker. Review this assembled day-hike plan (all values come from data tools).
+CHECKER_PROMPT = """You are the TrekChek safety checker. Review this assembled day-hike plan (all values come from data tools).
 Approve unless the data shows a concrete safety problem: finishing after sunset, a start later than the latest safe start,
 an active natural hazard near the trail, a Severe or Extreme NWS alert, a high chance of precipitation during the hike
 (judge rain by hike_window.max_precip_chance, the NWS hourly forecast for the hike's hours, not the daily weather), or a
@@ -744,7 +744,7 @@ def _plan(ctx):
     area = rules_area
     llm_place = clean_place(llm_constraints.get("place")) if parsed_by == "gemini" else None
     if llm_place and llm_place.lower() not in ("null", "none") and not same_place(llm_place, place):
-        found = ctx.resolve(llm_place)  # Gemini gives a name only; TreeScout looks it up
+        found = ctx.resolve(llm_place)  # Gemini gives a name only; TrekChek looks it up
         place = llm_place
         area, area_error = (None, found["error"]) if "error" in found else ((found["lat"], found["lon"]), None)
 
@@ -865,7 +865,7 @@ def _prefetch_context(ctx, area, constraints, space):
     out = {"guessed_place": ctx.rules.get("area_name") or ctx.rules.get("unknown_place"),
            "guessed_constraints": constraints}
     if area is None:
-        out["get_trails"] = {"error": "TreeScout could not find the place in the request"}
+        out["get_trails"] = {"error": "TrekChek could not find the place in the request"}
     if area is not None:
         trails = ctx.trails(*area)
         if _failed(trails):
@@ -1182,7 +1182,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "trail": trail,
         "alternatives": alternatives,
         "explanation": explanation,
-        "timing": _section(timing, TIMING_KEYS, "TreeScout timing", error),
+        "timing": _section(timing, TIMING_KEYS, "TrekChek timing", error),
         "weather": _section(weather, WEATHER_KEYS, "NWS", error),
         "climate": _section(climate, CLIMATE_KEYS, "NASA POWER", error),
         "space_weather": _section(space, SPACE_KEYS, "NASA DONKI", error),
@@ -1190,7 +1190,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "hazards_checked_at": hazards_at,
         "alerts": _section(extra.get("alerts"), ALERT_KEYS, "NWS", error),
         "hike_window": _section(extra.get("hike_window"), WINDOW_KEYS, "NWS hourly", error),
-        "seasonal": _section(extra.get("seasonal"), SEASONAL_KEYS, "TreeScout seasonal calendar", error),
+        "seasonal": _section(extra.get("seasonal"), SEASONAL_KEYS, "TrekChek seasonal calendar", error),
         "conditions": list(extra.get("conditions") or []),
         "climate_anomaly": _section(extra.get("climate_anomaly"), ANOMALY_KEYS, "NWS vs NASA POWER", error),
         "reports": [],
