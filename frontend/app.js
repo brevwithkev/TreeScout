@@ -40,6 +40,23 @@ const els = {
   hazardCount: $("#hazard-count"),
   sourcesBody: $("#sources-body"),
   gibsLabel: $("#gibs-label"),
+  mic: $("#mic-btn"),
+  micStatus: $("#mic-status"),
+  caption: $("#caption"),
+  turnback: $("#turnback"),
+  turnbackText: $("#turnback-text"),
+  hikeBar: $("#hike-bar"),
+  hikeProgress: $("#hike-bar .hike-progress"),
+  hikeProgressFill: $("#hike-progress-fill"),
+  simPlay: $("#sim-play"),
+  simReset: $("#sim-reset"),
+  simSlow: $("#sim-slow"),
+  simClock: $("#sim-clock"),
+  simKm: $("#sim-km"),
+  simSunset: $("#sim-sunset"),
+  simSunsetBox: $("#sim-sunset-box"),
+  simSpeed: $("#sim-speed"),
+  hikeNote: $("#hike-note"),
 };
 
 /* ==========================================================================
@@ -420,6 +437,7 @@ function renderPlan(plan, mock) {
   const coords = validCoords(plan.trail);
   const trailName = (isObj(plan.trail) && str(plan.trail.name)) || "Trail";
   drawTrail(coords, trailName);
+  hikeLoad(plan, coords); // resets any running simulation and pre-fetches narration audio
 
   const hazards = renderHazards(plan, coords ? coords[0] : DEFAULT_CENTER);
   renderSources(plan);
@@ -444,6 +462,7 @@ function setLoading(on, mock) {
   els.results.setAttribute("aria-busy", String(on));
   if (on) {
     clearTimeout(traceTimer);
+    hikeUnload(); // stop the old route's simulation and audio while the new plan loads
     els.results.replaceChildren(
       el("div", { class: "loading" },
         el("span", { class: "spinner", "aria-hidden": "true" }),
@@ -797,11 +816,482 @@ function renderSources(plan) {
 }
 
 /* ==========================================================================
+   Hike simulation, narration audio, late check, voice input
+   ========================================================================== */
+
+// Backend contracts (Kenneth's backend/voice.py and backend/narration.py). Confirm the shapes with him:
+const TTS_URL = "/tts";           // POST {"text": "..."}                                  -> audio bytes (audio/*)
+const LATE_URL = "/narrate/late"; // POST {"plan": {...}, "km_hiked": n, "elapsed_min": n} -> {"late": bool, "text": "..."}
+// The whole hike plays in about this many real seconds at normal speed (?simSeconds=N to change it).
+const SIM_SECONDS = Math.max(1, Number(new URLSearchParams(location.search).get("simSeconds")) || 60);
+const LATE_CHECK_MS = 3000;
+const TURN_BACK_FALLBACK = "You're behind schedule. Turn back now to finish before sunset.";
+// The late text only arrives with /narrate/late, so it can't be pre-fetched. This short fixed cue is
+// pre-fetched when the hiker slows down and plays instantly while the real text downloads.
+const TURN_BACK_CUE = "Turn back now.";
+let turnBackCueUrl = null; // Promise<string|null>; fetched once per page, kept across plans
+
+const hike = {
+  gen: 0,              // run generation: bumps on every reset; playback/late checks from older runs are ignored
+  planGen: 0,          // plan generation: bumps when a plan is unloaded; prefetched audio belongs to one plan
+  plan: null, coords: null, cumKm: null, totalKm: 0,
+  startMin: 600, durationMin: 60, sunsetMin: null,
+  progress: 0, elapsedMin: 0, speed: 1, state: "idle", // idle | running | paused | done
+  lastTs: null, raf: 0,
+  narration: [],       // [{key, coordIndex, text, url: Promise<string|null>}]
+  spoken: new Set(),
+  blobUrls: [], prefetch: null,
+  ttsDown: null, lateDown: null,
+  lateTimer: 0, lateInFlight: false, turnedBack: false,
+  marker: null, layer: null,
+};
+
+/* ---------- small helpers ---------- */
+
+function hhmmToMin(value) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(str(value) || "");
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+function minToHhmm(total) {
+  const t = ((Math.round(total) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+}
+
+function setHikeNote() {
+  const notes = [hike.ttsDown && `Voice unavailable (${hike.ttsDown}); showing captions only.`,
+                 hike.lateDown && `Late check unavailable (${hike.lateDown}).`].filter(Boolean);
+  els.hikeNote.textContent = notes.join(" ");
+  els.hikeNote.hidden = !notes.length;
+}
+
+/* ---------- narration audio: prefetch, queue, captions ---------- */
+
+const player = new Audio();
+player.preload = "auto";
+let audioQueue = [];
+let audioBusy = false;
+let captionTimer = 0;
+
+/** POST /tts and return a blob URL (or null). planGen ties the audio to one plan (revoked when that
+ *  plan unloads); planGen null means page-level audio that is kept (the turn-back cue). */
+async function fetchTts(text, signal, planGen) {
+  if (hike.ttsDown) return null;
+  const current = () => planGen === null || planGen === hike.planGen;
+  try {
+    const response = await fetch(TTS_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }), signal,
+    });
+    if (!response.ok) {
+      if (current()) { hike.ttsDown = `${TTS_URL} returned ${response.status}`; setHikeNote(); }
+      return null;
+    }
+    const type = response.headers.get("content-type") || "";
+    if (!/^audio\/|octet-stream/.test(type)) {
+      if (current()) { hike.ttsDown = `${TTS_URL} sent ${type || "no content type"}, not audio`; setHikeNote(); }
+      return null;
+    }
+    const url = URL.createObjectURL(await response.blob());
+    if (!current()) { URL.revokeObjectURL(url); return null; } // the plan changed meanwhile
+    if (planGen !== null) hike.blobUrls.push(url);
+    return url;
+  } catch (err) {
+    if (err.name !== "AbortError") console.warn("TTS failed:", err);
+    return null;
+  }
+}
+
+/** Start fetching audio for every narration line in parallel as soon as a plan loads. */
+function prefetchNarration(plan, planGen) {
+  hike.prefetch = new AbortController();
+  const lastIndex = hike.coords.length - 1;
+  hike.narration = (Array.isArray(plan.narration) ? plan.narration : [])
+    .filter((n) => isObj(n) && str(n.text))
+    .map((n, key) => {
+      const idx = Number.isInteger(Number(n.coord_index)) ? Number(n.coord_index) : 0;
+      return { key, coordIndex: Math.min(Math.max(idx, 0), lastIndex), text: str(n.text),
+               url: fetchTts(str(n.text), hike.prefetch.signal, planGen) };
+    })
+    .sort((a, b) => a.coordIndex - b.coordIndex);
+}
+
+function showCaption(text) {
+  clearTimeout(captionTimer);
+  els.caption.textContent = text;
+  els.caption.hidden = false;
+}
+
+function hideCaptionSoon(ms = 4000) {
+  clearTimeout(captionTimer);
+  captionTimer = setTimeout(() => { els.caption.hidden = true; }, ms);
+}
+
+function readingMs(text) {
+  return Math.min(8000, 1500 + text.split(/\s+/).length * 320); // caption-only pacing
+}
+
+function enqueueLine(line, { interrupt = false } = {}) {
+  if (interrupt) {
+    audioQueue = [];
+    player.pause();
+    audioBusy = false;
+  }
+  audioQueue.push(line);
+  if (!audioBusy) playNextLine();
+}
+
+async function playNextLine() {
+  const line = audioQueue.shift();
+  if (!line) {
+    audioBusy = false;
+    hideCaptionSoon();
+    return;
+  }
+  audioBusy = true;
+  showCaption(line.text);
+  const url = await line.url; // already resolved when prefetched, so there is no gap
+  if (line.gen !== hike.gen) return; // reset or new plan while waiting
+  if (!url) {
+    captionTimer = setTimeout(playNextLine, readingMs(line.text));
+    return;
+  }
+  player.src = url;
+  player.onended = () => playNextLine();
+  player.onerror = () => playNextLine();
+  try {
+    await player.play();
+    if (hike.state === "paused") player.pause();
+  } catch (err) {
+    console.warn("Audio playback failed:", err);
+    captionTimer = setTimeout(playNextLine, readingMs(line.text));
+  }
+}
+
+function stopAudio() {
+  audioQueue = [];
+  audioBusy = false;
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  clearTimeout(captionTimer);
+  els.caption.hidden = true;
+}
+
+/* ---------- route geometry ---------- */
+
+function cumulativeKm(coords) {
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + haversineKm(coords[i - 1], coords[i]));
+  return cum;
+}
+
+/** Position and coordinate index at a fraction (0-1) of the route length. */
+function positionAt(fraction) {
+  const { coords, cumKm } = hike;
+  const target = fraction * cumKm[cumKm.length - 1];
+  let lo = 0, hi = cumKm.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (cumKm[mid] <= target) lo = mid; else hi = mid;
+  }
+  const span = cumKm[hi] - cumKm[lo] || 1;
+  const t = Math.min(1, Math.max(0, (target - cumKm[lo]) / span));
+  const [a, b] = [coords[lo], coords[hi]];
+  return { latlng: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], index: fraction >= 1 ? hi : lo };
+}
+
+/* ---------- simulation lifecycle ---------- */
+
+function hikeUnload() {
+  hike.planGen++;
+  hikeReset();
+  hike.prefetch?.abort();
+  for (const url of hike.blobUrls) URL.revokeObjectURL(url);
+  hike.blobUrls = [];
+  hike.narration = [];
+  hike.plan = hike.coords = null;
+  els.hikeBar.hidden = true;
+}
+
+function hikeLoad(plan, coords) {
+  hikeUnload();
+  if (!coords || !map) return;
+  hike.plan = plan;
+  hike.coords = coords;
+  hike.cumKm = cumulativeKm(coords);
+  const routeKm = hike.cumKm[hike.cumKm.length - 1];
+  const statedKm = toNum(isObj(plan.trail) ? plan.trail.distance_km : NaN);
+  hike.totalKm = Number.isFinite(statedKm) && statedKm > 0 ? statedKm : routeKm;
+
+  const timing = section(plan, "timing") || {};
+  const constraints = isObj(plan.constraints) ? plan.constraints : {};
+  hike.startMin = hhmmToMin(timing.start) ?? hhmmToMin(constraints.start) ?? 600;
+  const minutes = toNum(timing.est_duration_min);
+  hike.durationMin = Number.isFinite(minutes) && minutes > 0 ? minutes : (hike.totalKm / 5) * 60;
+  hike.sunsetMin = hhmmToMin(timing.sunset);
+
+  hike.ttsDown = null;
+  hike.lateDown = null;
+  setHikeNote();
+  prefetchNarration(plan, hike.planGen);
+  els.hikeBar.hidden = false;
+  renderHike();
+}
+
+function hikeReset() {
+  hike.gen++;
+  cancelAnimationFrame(hike.raf);
+  stopLateChecks();
+  stopAudio();
+  hike.state = "idle";
+  hike.progress = 0;
+  hike.elapsedMin = 0;
+  hike.speed = 1;
+  hike.lastTs = null;
+  hike.spoken = new Set();
+  hike.turnedBack = false;
+  hike.lateInFlight = false;
+  els.turnback.hidden = true;
+  if (hike.layer) hike.layer.clearLayers();
+  hike.marker = null;
+  if (hike.coords) renderHike();
+}
+
+function hikeStart() {
+  if (!hike.coords) return;
+  if (hike.state === "done") hikeReset();
+  if (!hike.layer) hike.layer = L.layerGroup().addTo(map);
+  if (!hike.marker) {
+    hike.marker = L.marker(hike.coords[0], {
+      icon: divIcon("marker--hiker", ""), interactive: false, keyboard: false, zIndexOffset: 2000,
+    }).addTo(hike.layer);
+  }
+  hike.state = "running";
+  hike.lastTs = null;
+  if (hike.speed < 1 && !hike.turnedBack) startLateChecks();
+  if (player.src && player.paused && audioBusy) player.play().catch(() => {});
+  hike.raf = requestAnimationFrame(hikeFrame);
+  renderHike();
+}
+
+function hikePause() {
+  hike.state = "paused";
+  cancelAnimationFrame(hike.raf);
+  stopLateChecks();
+  player.pause();
+  renderHike();
+}
+
+function hikeSlowDown() {
+  if (hike.speed < 1 || !hike.coords) return;
+  hike.speed = 0.5; // the hiker walks half as fast; the simulated clock keeps its pace, so time slips
+  if (!turnBackCueUrl && !hike.ttsDown) {
+    turnBackCueUrl = fetchTts(TURN_BACK_CUE, undefined, null).then((url) => url || (turnBackCueUrl = null));
+  }
+  if (hike.state === "running") startLateChecks();
+  renderHike();
+}
+
+function hikeFrame(ts) {
+  if (hike.state !== "running") return;
+  const dt = hike.lastTs === null ? 0 : Math.min(0.25, (ts - hike.lastTs) / 1000);
+  hike.lastTs = ts;
+  hike.progress = Math.min(1, hike.progress + (dt * hike.speed) / SIM_SECONDS);
+  hike.elapsedMin += (dt * hike.durationMin) / SIM_SECONDS;
+
+  const { latlng, index } = positionAt(hike.progress);
+  hike.marker.setLatLng(latlng);
+  for (const line of hike.narration) {
+    if (line.coordIndex <= index && !hike.spoken.has(line.key)) {
+      hike.spoken.add(line.key);
+      enqueueLine({ text: line.text, url: line.url, gen: hike.gen });
+    }
+  }
+  if (hike.progress >= 1) {
+    hike.state = "done";
+    stopLateChecks();
+  } else {
+    hike.raf = requestAnimationFrame(hikeFrame);
+  }
+  renderHike();
+}
+
+function renderHike() {
+  const pct = Math.round(hike.progress * 1000) / 10;
+  els.hikeProgressFill.style.width = `${pct}%`;
+  els.hikeProgress.setAttribute("aria-valuenow", String(Math.round(pct)));
+  const clock = hike.startMin + hike.elapsedMin;
+  els.simClock.textContent = minToHhmm(clock);
+  els.simKm.textContent = `${(hike.progress * hike.totalKm).toFixed(2)} / ${hike.totalKm.toFixed(1)} km`;
+  els.simSpeed.textContent = hike.speed < 1 ? "½× (slowed)" : "1×";
+
+  els.simSunsetBox.classList.remove("readout--warn", "readout--bad");
+  if (hike.sunsetMin === null) {
+    els.simSunset.textContent = "—";
+  } else {
+    const left = hike.sunsetMin - clock;
+    if (left <= 0) {
+      els.simSunset.textContent = "After sunset";
+      els.simSunsetBox.classList.add("readout--bad");
+    } else {
+      els.simSunset.textContent = left >= 60 ? `${Math.floor(left / 60)} h ${String(Math.floor(left % 60)).padStart(2, "0")} min`
+                                             : `${Math.floor(left)} min`;
+      if (left < 30) els.simSunsetBox.classList.add("readout--warn");
+    }
+  }
+
+  els.simPlay.textContent = { idle: "▶ Simulate hike", running: "❚❚ Pause", paused: "▶ Resume",
+                              done: "↺ Simulate again" }[hike.state];
+  els.simSlow.disabled = hike.speed < 1 || hike.state === "idle" || hike.state === "done";
+  els.simSlow.textContent = hike.speed < 1 ? "🐢 Slowed down" : "🐢 Slow down";
+}
+
+/* ---------- late check after slowing down ---------- */
+
+function startLateChecks() {
+  stopLateChecks();
+  if (hike.lateDown || hike.turnedBack) return;
+  hike.lateTimer = setInterval(checkLate, LATE_CHECK_MS);
+}
+
+function stopLateChecks() {
+  clearInterval(hike.lateTimer);
+  hike.lateTimer = 0;
+}
+
+async function checkLate() {
+  if (hike.lateInFlight || hike.turnedBack || hike.state !== "running") return;
+  const gen = hike.gen;
+  hike.lateInFlight = true;
+  try {
+    const response = await fetch(LATE_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: hike.plan, km_hiked: Math.round(hike.progress * hike.totalKm * 100) / 100,
+                             elapsed_min: Math.round(hike.elapsedMin * 10) / 10 }),
+    });
+    if (gen !== hike.gen) return;
+    if (!response.ok) {
+      hike.lateDown = `${LATE_URL} returned ${response.status}`;
+      setHikeNote();
+      stopLateChecks();
+      return;
+    }
+    const result = await response.json();
+    if (gen !== hike.gen || !isObj(result) || result.late !== true || hike.turnedBack) return;
+    turnBack(str(result.text) || TURN_BACK_FALLBACK, gen);
+  } catch (err) {
+    console.warn("Late check failed:", err);
+  } finally {
+    if (gen === hike.gen) hike.lateInFlight = false;
+  }
+}
+
+function turnBack(text, gen) {
+  hike.turnedBack = true; // shown and spoken only once per run
+  stopLateChecks();
+  els.turnbackText.textContent = text;
+  els.turnback.hidden = false;
+  const spoken = fetchTts(text, undefined, hike.planGen); // starts now, downloads while the cue plays
+  if (turnBackCueUrl) {
+    enqueueLine({ text: TURN_BACK_CUE, url: turnBackCueUrl, gen }, { interrupt: true });
+    enqueueLine({ text, url: spoken, gen });
+  } else {
+    enqueueLine({ text, url: spoken, gen }, { interrupt: true });
+  }
+}
+
+/* ---------- voice input ---------- */
+
+function initVoice() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    els.mic.hidden = true; // unsupported browser (e.g. Firefox): no button at all
+    return;
+  }
+  els.mic.hidden = false;
+  let recognition = null;
+
+  const setListening = (on) => {
+    els.mic.setAttribute("aria-pressed", String(on));
+    els.mic.querySelector(".mic-word").textContent = on ? "Stop" : "Speak";
+    els.mic.title = on ? "Stop listening" : "Speak your request";
+  };
+  const say = (text) => {
+    els.micStatus.textContent = text || "";
+    els.micStatus.hidden = !text;
+  };
+
+  els.mic.addEventListener("click", () => {
+    if (recognition) {
+      recognition.stop();
+      return;
+    }
+    let finalText = "";
+    let failed = false;
+    recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) finalText += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      els.request.value = `${finalText} ${interim}`.trim();
+    };
+    recognition.onerror = (event) => {
+      failed = true;
+      say({
+        "not-allowed": "Microphone access was blocked. Allow it in the browser's site settings.",
+        "service-not-allowed": "Speech recognition is blocked in this browser.",
+        "no-speech": "Didn't hear anything. Press Speak and try again.",
+        "audio-capture": "No microphone found.",
+        network: "Speech recognition needs an internet connection.",
+        aborted: "",
+      }[event.error] ?? `Speech recognition error: ${event.error}`);
+    };
+    recognition.onend = () => {
+      recognition = null;
+      setListening(false);
+      const text = finalText.trim();
+      if (text && !failed) {
+        say("");
+        els.request.value = text;
+        els.form.requestSubmit(); // same as clicking Plan
+      }
+    };
+
+    say("Listening… say your hike request.");
+    setListening(true);
+    try {
+      recognition.start();
+    } catch (err) {
+      recognition = null;
+      setListening(false);
+      say(`Couldn't start the microphone: ${err.message}`);
+    }
+  });
+}
+
+function initHike() {
+  els.simPlay.addEventListener("click", () => (hike.state === "running" ? hikePause() : hikeStart()));
+  els.simReset.addEventListener("click", hikeReset);
+  els.simSlow.addEventListener("click", hikeSlowDown);
+}
+
+/* ==========================================================================
    Start
    ========================================================================== */
 
 initTabs();
 initForm();
 initMap();
+initHike();
+initVoice();
 els.form.addEventListener("submit", onPlan);
 checkHealth();

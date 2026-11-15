@@ -36,8 +36,15 @@
           <section id="panel-plan" class="tab-panel" role="tabpanel" aria-labelledby="tab-plan">
             <form id="plan-form" class="plan-form" novalidate>
               <label for="request" class="label">Hike request</label>
-              <textarea id="request" name="request" rows="3" required
-                        placeholder="e.g. Easy 3 mile walk near Ypsilanti tomorrow morning">Easy 3 mile walk near Ypsilanti tomorrow morning</textarea>
+              <div class="request-row">
+                <textarea id="request" name="request" rows="3" required
+                          placeholder="e.g. Easy 3 mile walk near Ypsilanti tomorrow morning">Easy 3 mile walk near Ypsilanti tomorrow morning</textarea>
+                <button type="button" id="mic-btn" class="btn mic-btn" aria-pressed="false" hidden
+                        title="Speak your request">
+                  <span class="mic-icon" aria-hidden="true">🎙</span><span class="mic-word">Speak</span>
+                </button>
+              </div>
+              <p id="mic-status" class="mic-status" role="status" hidden></p>
 
               <div class="field">
                 <div class="field-row">
@@ -102,6 +109,33 @@
       <div class="map-wrap">
         <div id="map" role="region" aria-label="Trail map"></div>
         <p id="gibs-label" class="map-label" hidden></p>
+
+        <div id="turnback" class="turnback" role="alert" hidden>
+          <strong class="turnback-title"><span aria-hidden="true">⚠</span> TURN BACK</strong>
+          <p id="turnback-text" class="turnback-text"></p>
+        </div>
+
+        <div class="map-bottom">
+          <p id="caption" class="map-caption" aria-live="polite" hidden></p>
+          <div id="hike-bar" class="hike-bar" role="group" aria-label="Hike simulation" hidden>
+            <div class="hike-progress" role="progressbar" aria-label="Hike progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span id="hike-progress-fill" class="hike-progress-fill"></span>
+            </div>
+            <div class="hike-controls">
+              <button type="button" id="sim-play" class="btn btn--primary sim-play">▶ Simulate hike</button>
+              <button type="button" id="sim-reset" class="btn">↺ Reset</button>
+              <button type="button" id="sim-slow" class="btn" disabled>🐢 Slow down</button>
+            </div>
+            <div class="hike-readouts">
+              <div class="readout"><span class="label">Clock</span><span id="sim-clock" class="value">--:--</span></div>
+              <div class="readout"><span class="label">Hiked</span><span id="sim-km" class="value">0.00 km</span></div>
+              <div id="sim-sunset-box" class="readout readout--sunset"><span class="label">Sunset in</span><span id="sim-sunset" class="value">—</span></div>
+              <div class="readout"><span class="label">Speed</span><span id="sim-speed" class="value">1×</span></div>
+            </div>
+            <p id="hike-note" class="hike-note" hidden></p>
+          </div>
+        </div>
       </div>
     </div>
   </body>

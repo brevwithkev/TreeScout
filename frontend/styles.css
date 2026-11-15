@@ -551,51 +551,86 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 .marker--hiker  { background: var(--ink); outline: 3px solid var(--accent-soft); }
 .marker--hazard { font-size: 15px; background: var(--surface); border-color: var(--warn); }
 
-/* ---------- Hike bar (floats over the bottom of the map) ---------- */
+/* ---------- Map bottom: narration caption + hike bar (float over the map) ---------- */
 
-.hike-bar {
+.map-bottom {
   position: absolute;
   left: 50%;
   bottom: var(--space-5);
   transform: translateX(-50%);
   z-index: 1000;                    /* above Leaflet panes */
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-4);
-  max-width: calc(100% - 2 * var(--space-4));
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  width: min(720px, calc(100% - 2 * var(--space-4)));
+  pointer-events: none;             /* the map stays draggable around the bar */
+}
+.map-bottom > * { pointer-events: auto; }
+
+.map-caption {
+  margin: 0;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-4);
+  font-size: 1.02rem;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.map-caption::before { content: "🔊 "; }   /* icon + text, not color alone */
+
+.hike-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
 }
+.hike-progress { height: 6px; background: var(--bg); border-radius: 999px; overflow: hidden; }
+.hike-progress-fill { display: block; height: 100%; width: 0; background: var(--accent); border-radius: inherit; }
+.hike-controls, .hike-readouts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
+.hike-controls .btn { padding: var(--space-1) var(--space-3); }
+.sim-play { min-width: 9.5rem; }
+.hike-note { margin: 0; font-size: 0.78rem; color: var(--ink-3); }
+.hike-note::before { content: "i "; font-style: italic; font-weight: 700; color: var(--info); }
 
-.hike-bar .play {
-  width: 40px; height: 40px;
-  padding: 0;
-  font-size: 1rem;
+/* TURN BACK: big orange banner at the top of the map (word + icon + color) */
+.turnback {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  width: min(560px, calc(100% - 2 * var(--space-4)));
+  padding: var(--space-4) var(--space-5);
+  text-align: center;
   color: var(--accent-ink);
   background: var(--accent);
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
+.turnback-title { display: block; font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 600; letter-spacing: 0.06em; line-height: 1.1; }
+.turnback-text { margin: var(--space-2) 0 0; color: var(--accent-ink); font-size: 1rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .turnback:not([hidden]) { animation: turnback-in 260ms ease-out; }
+}
+@keyframes turnback-in { from { opacity: 0; transform: translate(-50%, -8px); } }
 
-.speed { display: inline-flex; padding: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
-.speed button {
-  padding: var(--space-1) var(--space-2);
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  color: var(--ink-3);
-  background: transparent;
-  border: 0;
-  border-radius: calc(var(--radius) - 2px);
-  cursor: pointer;
-}
-.speed button:hover { color: var(--ink); }
-.speed button[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--accent); }
+/* Voice input */
+.request-row { display: flex; gap: var(--space-2); align-items: stretch; }
+.request-row textarea { flex: 1; min-width: 0; }
+.mic-btn { flex-direction: column; gap: 2px; padding: var(--space-2); min-width: 4rem; font-size: 0.75rem; }
+.mic-icon { font-size: 1.25rem; line-height: 1; }
+.mic-btn[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.mic-status { margin: 0; font-size: 0.82rem; color: var(--ink-2); }
 
 .readout { display: flex; flex-direction: column; min-width: 4.5rem; }
 .readout .label { font-size: 0.66rem; }
@@ -609,5 +644,5 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 .readout--bad .value::before  { content: "✕ "; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .tab, .btn, .speed button { transition: background-color 120ms, color 120ms, border-color 120ms; }
+  .tab, .btn { transition: background-color 120ms, color 120ms, border-color 120ms; }
 }
