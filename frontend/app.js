@@ -608,7 +608,8 @@ function hikeWindowBlock(plan) {
   return el("div", { class: "hike-window" },
     el("p", { class: "hike-window-summary" }, str(v.summary) || "During your hike: —"),
     conditions.length && el("p", { class: "hazard-meta" }, conditions.join(" · ")),
-    el("p", { class: "source-line" }, `Source: ${hw.source || "NWS hourly"}`, str(v.window) ? ` · ${str(v.window)}` : null));
+    el("p", { class: "source-line" }, `Source: ${hw.source || "NWS hourly"}`, str(v.window) ? ` · ${str(v.window)}` : null,
+      cachedFrom(hw) && ` · ${cachedFrom(hw)} (the live check failed)`));
 }
 
 function climateCard(plan) {
@@ -840,7 +841,14 @@ function staticHazard(icon, title, tag, meta, link) {
 
 function sourceChecked(s, fallback) {
   const at = s.state === "ok" && isObj(s.value) ? fmtLocal(s.value.checked_at) : null;
+  if (cachedFrom(s)) return `Source: ${s.source || fallback} · the live check failed; showing the result from ${at}`;
   return `Source: ${s.source || fallback}${at ? ` · checked ${at}` : ""}`;
+}
+
+/** "cached from <time>" when the backend fell back to its last good result (stale: true), else null. */
+function cachedFrom(s) {
+  if (s.state !== "ok" || !isObj(s.value) || s.value.stale !== true) return null;
+  return `cached from ${fmtLocal(s.value.checked_at) || "an earlier check"}`;
 }
 
 /** Hazards tab: NASA EONET events (with map markers), NWS alerts, Seasonal, Trail conditions.
@@ -858,7 +866,7 @@ function renderHazards(plan, origin) {
     return staticHazard("⚠️", str(a.event) || "Weather alert", el("span", { class: `state state--${sev.cls} sev` }, sev.word),
       [str(a.headline), when], str(a.link) && { href: str(a.link), text: "NWS alert details" });
   }));
-  const alertsGroup = hazardGroup("NWS alerts", "📢",
+  const alertsGroup = hazardGroup(cachedFrom(alerts) ? `NWS alerts (${cachedFrom(alerts)})` : "NWS alerts", "📢",
     groupProblem(alerts, "NWS alerts")
       || (alertItems.length ? alertList() : el("p", { class: "state state--ok" }, "No active NWS alerts for this point")),
     alerts.state === "ok" && sourceChecked(alerts, "NWS"));
@@ -964,7 +972,8 @@ function renderSources(plan) {
   const hRow = (what, key, fallback) => {
     const h = phaseH(plan, key);
     const date = h.state === "ok" && isObj(h.value) ? fmtLocal(h.value.checked_at) : null;
-    return row(what, h.source || fallback, h.state === "missing" ? "missing" : h.state === "ok", date);
+    const src = `${h.source || fallback}${cachedFrom(h) ? " (cached; live check failed)" : ""}`;
+    return row(what, src, h.state === "missing" ? "missing" : h.state === "ok", date);
   };
 
   const s = (k) => section(plan, k);
