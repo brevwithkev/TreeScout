@@ -883,8 +883,33 @@ def _approval_line(plan):
     return "; ".join(bits)
 
 
+# A checker problem "about the start time" (the Gemini checker restates a late start in its own words).
+_START_TIME_PROBLEM = re.compile(r"\b(start|sunset|dark|daylight|late)\b", re.IGNORECASE)
+
+
+def _late_start_only(problems, timing):
+    """True when the only problem is a late start: the timing check failed, and every other problem
+    (e.g. the Gemini checker's wording of the same thing) is about the start time or sunset too."""
+    if _failed(timing) or not timing.get("warning"):
+        return False
+    return all(p == timing["warning"] or _START_TIME_PROBLEM.search(p) for p in problems)
+
+
 def _revise(ctx, planner, problems, plan, ranked, rejected, constraints):
-    """Ask the LLM planner for a different trail or start time; fall back to rules. Returns (answer, constraints)."""
+    """Fix a rejected plan. Returns (answer, constraints).
+
+    1. Only a late start: keep the trail and move the start to the latest safe start (Python, no LLM).
+    2. Otherwise ask the Gemini planner for a different trail or start time (if available and in time).
+    3. Otherwise the rule-based reviser tries the next-ranked trail.
+    """
+    timing = plan["timing"]
+    if _late_start_only(problems, timing):
+        start = timing["latest_safe_start"]
+        rejected.discard(plan["trail"]["osm_id"])
+        ctx.trace.add("planner", "decide", f"Planner moved the start from {timing['start']} to {start} "
+                                           "to finish before sunset")
+        return {"chosen_osm_id": plan["trail"]["osm_id"]}, {**constraints, "start": start}
+
     if planner is not None and not ctx.llm_down and ctx.elapsed() > LLM_START_DEADLINE_S:
         ctx.trace.add("planner", "fallback", f"Skipped the Gemini revision: more than {LLM_START_DEADLINE_S} s had "
                                              "passed, so /plan stays under 20 s; "
@@ -901,17 +926,6 @@ def _revise(ctx, planner, problems, plan, ranked, rejected, constraints):
             logger.warning("LLM planner unavailable during revision: %s", exc)
             ctx.trace.add("planner", "fallback", "LLM unavailable, used rule-based planner")
 
-    timing = plan["timing"]
-    late = not _failed(timing) and timing.get("warning")
-    other_problems = [p for p in problems if p != timing.get("warning")] if not _failed(timing) else problems
-    if late and not other_problems:
-        # Keep the trail, move the start to the latest safe start (rounded down to 15 min).
-        hh, mm = map(int, timing["latest_safe_start"].split(":"))
-        start = f"{hh:02d}:{mm - mm % 15:02d}"
-        rejected.discard(plan["trail"]["osm_id"])
-        ctx.trace.add("planner", "decide", f"Moved the start from {timing['start']} to {start} so the hike ends "
-                                           "30 min before sunset")
-        return {"chosen_osm_id": plan["trail"]["osm_id"]}, {**constraints, "start": start}
     nxt = next((t for t in ranked if t["osm_id"] not in rejected), None)
     if nxt:
         ctx.trace.add("planner", "decide", f"Trying next-ranked trail {nxt['name']} ({nxt['distance_km']:.1f} km)")

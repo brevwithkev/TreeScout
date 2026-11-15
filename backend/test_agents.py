@@ -210,6 +210,43 @@ class GuardAndCoverageTests(unittest.TestCase):
         self.assertNotIn("Outside our coverage area (southeast Michigan)", result["warnings"])
 
 
+class LateStartRevisionTests(unittest.TestCase):
+    """Only a late start -> Python keeps the trail and moves the start; anything else -> Gemini revises."""
+
+    setUp = FailFastTests.setUp
+
+    def plan_with(self, text, checker_replies):
+        from google.genai import types
+        replies = iter(checker_replies)
+        answer = json.dumps({"chosen_osm_id": 11, "explanation": "Real trail is 2.2 km (1.4 mi)."})
+        fake = FakeGemini(lambda: FakeReply(answer), checker=lambda: FakeReply(json.dumps(next(replies))))
+        with patch("backend.agents._gemini", lambda: (fake, "gemini-test-flash", types)):
+            return agents.make_plan(text, 42.0, -83.0), fake
+
+    def test_late_start_only_is_moved_in_python(self):
+        result, fake = self.plan_with("2 km walk near Ypsilanti starting at 4:50 PM tomorrow", [
+            {"approved": False, "problems": ["Starting at 16:50 is after the latest safe start."]},
+            {"approved": True, "problems": []},
+        ])
+        timing = result["timing"]
+        self.assertEqual(fake.calls, {"planner": 1, "checker": 2})  # no Gemini revision
+        self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+        self.assertEqual(result["trail"]["name"], "Real trail")      # same trail
+        self.assertEqual(timing["start"], timing["latest_safe_start"])
+        self.assertIn(f"Planner moved the start from 16:50 to {timing['start']} to finish before sunset",
+                      [e["summary"] for e in result["agent_trace"]])
+        self.assertTrue(result["warnings"][0].startswith(f"You asked to start at 16:50; moved to {timing['start']}"))
+        self.assertEqual(result["checker"], {"approved": True, "rounds": 2})
+
+    def test_late_start_plus_another_problem_goes_to_gemini(self):
+        result, fake = self.plan_with("2 km walk near Ypsilanti starting at 4:50 PM tomorrow", [
+            {"approved": False, "problems": ["Thunderstorms are forecast for the afternoon."]},
+            {"approved": True, "problems": []},
+        ])
+        self.assertEqual(fake.calls["planner"], 2)                    # Gemini was asked to revise
+        self.assertFalse([e for e in result["agent_trace"] if e["summary"].startswith("Planner moved the start")])
+
+
 class StartMovedTests(unittest.TestCase):
     def setUp(self):
         for name, fake in FAKE_TOOLS.items():
