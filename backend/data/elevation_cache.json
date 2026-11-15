@@ -9,6 +9,11 @@
   "points_sampled": 100,
   "source": "Open-Elevation"
  },
+ "316055720:0f6a4d273e8e8643": {
+  "elevation_gain_m": 50,
+  "points_sampled": 100,
+  "source": "Open-Meteo Elevation"
+ },
  "33076120:ef2a3b8a5f4738e3": {
   "elevation_gain_m": 16,
   "points_sampled": 88,
@@ -24,6 +29,16 @@
   "points_sampled": 80,
   "source": "Open-Elevation"
  },
+ "399341772:c08a05c647346f83": {
+  "elevation_gain_m": 40,
+  "points_sampled": 100,
+  "source": "Open-Meteo Elevation"
+ },
+ "399341931:fca3043ec791e48b": {
+  "elevation_gain_m": 31,
+  "points_sampled": 100,
+  "source": "Open-Meteo Elevation"
+ },
  "43226520:5a9483280252fb9b": {
   "elevation_gain_m": 8,
   "points_sampled": 69,
@@ -33,5 +48,10 @@
   "elevation_gain_m": 32,
   "points_sampled": 100,
   "source": "Open-Elevation"
+ },
+ "55124390:8564f6d8a4b29db6": {
+  "elevation_gain_m": 121,
+  "points_sampled": 100,
+  "source": "Open-Meteo Elevation"
  }
 }
