@@ -3,5 +3,5 @@ uvicorn>=0.30,<1.0
 python-dotenv>=1.0,<2.0
 google-genai>=1.0,<4.0
 astral>=3.2,<4.0
-tzdata>=2024.1
+tzdata>=2026.6          # zoneinfo reads only this package (backend/tools/common.py)
 timezonefinder>=6.5,<10

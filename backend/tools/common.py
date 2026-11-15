@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
+import zoneinfo
 from tempfile import NamedTemporaryFile
 import hashlib
 import json
@@ -21,6 +22,9 @@ logger = logging.getLogger("treescout.tools")
 
 
 DEFAULT_TZ = "America/Detroit"
+# Time zones come from the tzdata package (backend/requirements.txt), never the OS zone files, so every machine
+# computes the same local times (Windows has none; Linux/macOS copies vary by age).
+zoneinfo.reset_tzpath(to=())
 _tz_finder = None
 _tz_lock = Lock()
 
