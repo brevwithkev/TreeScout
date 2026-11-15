@@ -64,14 +64,42 @@ class ElevationTests(unittest.TestCase):
         self.use(meteo, oe)
         elevation.get_elevation_gain(COORDS, 101)
         saved = json.loads(self.cache_file.read_text(encoding="utf-8"))
-        self.assertEqual(list(saved.values()), [{"source": "Open-Meteo Elevation", "elevation_gain_m": 10,
-                                                 "points_sampled": 3}])
+        entry = next(iter(saved.values()))
+        self.assertEqual({k: entry[k] for k in ("source", "elevation_gain_m", "elevation_loss_m", "min_m", "max_m",
+                                                "points_sampled")},
+                         {"source": "Open-Meteo Elevation", "elevation_gain_m": 10, "elevation_loss_m": 5,
+                          "min_m": 220, "max_m": 230, "points_sampled": 3})
+        self.assertEqual([h for _km, h in entry["profile"]], HEIGHTS)
+        self.assertEqual(entry["profile"][0][0], 0.0)
+        self.assertAlmostEqual(entry["profile"][-1][0], 2.8, delta=0.1)   # km along the trail
         self.assertTrue(next(iter(saved)).startswith("101:"))
         elevation._cache = None                                # a fresh process reads the file
         again = elevation.get_elevation_gain(COORDS, 101)
         self.assertEqual((again["elevation_gain_m"], again["source"], meteo.calls), (10, "Open-Meteo Elevation", 1))
         elevation.get_elevation_gain(COORDS, 202)              # same geometry, other trail id: separate entry
         self.assertEqual(meteo.calls, 2)
+
+    def test_srtm_is_the_first_provider(self):
+        self.assertEqual([name for name, _ in elevation.PROVIDERS],
+                         ["NASA SRTM via OpenTopoData", "Open-Meteo Elevation", "Open-Elevation"])
+        sent = []
+
+        def fake_get_json(url, params=None, headers=None, timeout=10):
+            sent.append((url, params))
+            return {"status": "OK", "results": [{"elevation": h} for h in HEIGHTS]}
+        with patch.object(elevation, "get_json", fake_get_json), patch.object(elevation.time, "sleep") as sleep,                 patch.object(elevation, "SRTM_MIN_INTERVAL_S", 1.0):
+            elevation._srtm_last[0] = 0.0
+            self.assertEqual(elevation._srtm(COORDS), HEIGHTS)
+            elevation._srtm(COORDS)
+        self.assertEqual(sent[0][0], "https://api.opentopodata.org/v1/srtm30m")
+        self.assertEqual(sent[0][1], {"locations": "42.24000,-83.61000|42.25000,-83.62000|42.26000,-83.63000"})
+        self.assertEqual(sleep.call_count, 1)                              # at most 1 request per second
+        self.assertGreater(sleep.call_args[0][0], 0.9)
+
+    def test_srtm_error_status_moves_to_the_next_provider(self):
+        with patch.object(elevation, "get_json", lambda *a, **k: {"status": "INVALID_REQUEST", "error": "x"}),                 patch.object(elevation, "SRTM_MIN_INTERVAL_S", 0):
+            with self.assertRaises(ValueError):
+                elevation._srtm(COORDS)
 
     def test_both_fail_is_unavailable_and_not_cached(self):
         self.use(Provider(error=rate_limited()), Provider(error=TimeoutError("timed out")))

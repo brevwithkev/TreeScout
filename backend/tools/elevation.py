@@ -1,11 +1,14 @@
-"""Total ascent along a route: Open-Meteo, with Open-Elevation as a fallback, and a permanent disk cache.
+"""Elevation along a trail: NASA SRTM via OpenTopoData first, then Open-Meteo, then Open-Elevation, with a
+permanent disk cache.
 
 Terrain doesn't change, so every successful result is kept forever in backend/data/elevation_cache.json
 (committed), keyed by the trail's OSM id plus a hash of the sampled points. A cache hit never touches the
-network, which also protects the Open-Meteo daily quota.
+network, which also protects the providers' daily quotas. New results keep the sampled profile
+([[km along the trail, m], ...]) so an out-and-back route can count the climb back up (backend/tools/route.py).
 
-Fill the cache for every trail in the saved Ypsilanti snapshot:
+Fill the cache for every trail in the saved Ypsilanti snapshot, or in the seeded snapshots:
     python -m backend.tools.elevation precompute
+    python -m backend.tools.elevation precompute seeds
 """
 
 from pathlib import Path
@@ -19,26 +22,43 @@ import os
 import time
 
 from backend.tools.common import USER_AGENT, get_json, now_iso, unavailable
+from backend.tools.trails import haversine
 
 logger = logging.getLogger("treescout.elevation")
 
-SOURCE = "Open-Meteo Elevation"            # kept for callers that label the primary provider
+SRTM = ("NASA SRTM via OpenTopoData", "https://api.opentopodata.org/v1/srtm30m")
+SOURCE = SRTM[0]                            # the primary provider
+SRTM_MIN_INTERVAL_S = 1.0                   # OpenTopoData public API: max 1 request/second, 100 points/request
 OPEN_METEO = ("Open-Meteo Elevation", "https://api.open-meteo.com/v1/elevation")
 OPEN_ELEVATION = ("Open-Elevation", "https://api.open-elevation.com/api/v1/lookup")
 TIMEOUT = 10
-MAX_POINTS = 100  # Open-Meteo accepts up to 100 coordinates per request
+MAX_POINTS = 100  # OpenTopoData and Open-Meteo accept up to 100 coordinates per request
 CACHE_FILE = Path(__file__).resolve().parents[1] / "data" / "elevation_cache.json"
 PRECOMPUTE_PAUSE_S = 2.0  # between network lookups in precompute (public APIs rate-limit bursts)
 
 _lock = Lock()
+_srtm_lock = Lock()
+_srtm_last = [0.0]
 _cache = None  # loaded lazily from CACHE_FILE: {key: {"elevation_gain_m", "source", "points_sampled"}}
 
 
+def _sample_indices(count, n=MAX_POINTS):
+    if count <= n:
+        return list(range(count))
+    step = (count - 1) / (n - 1)
+    return [round(i * step) for i in range(n)]
+
+
 def _sample(coords, n=MAX_POINTS):
-    if len(coords) <= n:
-        return list(coords)
-    step = (len(coords) - 1) / (n - 1)
-    return [coords[round(i * step)] for i in range(n)]
+    return [coords[i] for i in _sample_indices(len(coords), n)]
+
+
+def _sample_km(coords, n=MAX_POINTS):
+    """Distance along the full trail (km) at each sampled point."""
+    cum = [0.0]
+    for a, b in zip(coords, coords[1:]):
+        cum.append(cum[-1] + haversine(a, b))
+    return [cum[i] for i in _sample_indices(len(coords), n)]
 
 
 def cache_key(osm_id, points):
@@ -74,6 +94,22 @@ def _store(key, entry):
             logger.warning("Could not save elevation cache: %s", exc)
 
 
+def _srtm(points):
+    """NASA SRTM 30 m heights from OpenTopoData (our User-Agent; at most 1 request per second)."""
+    with _srtm_lock:
+        wait = _srtm_last[0] + SRTM_MIN_INTERVAL_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            data = get_json(SRTM[1], params={"locations": "|".join(f"{p[0]:.5f},{p[1]:.5f}" for p in points)},
+                            timeout=TIMEOUT)
+        finally:
+            _srtm_last[0] = time.monotonic()
+    if data.get("status") != "OK":
+        raise ValueError(f"status {data.get('status')}: {data.get('error')}")
+    return [r.get("elevation") for r in data["results"]]
+
+
 def _open_meteo(points):
     data = get_json(OPEN_METEO[1], params={
         "latitude": ",".join(f"{p[0]:.5f}" for p in points),
@@ -91,7 +127,7 @@ def _open_elevation(points):
     return [r["elevation"] for r in data["results"]]
 
 
-PROVIDERS = [(OPEN_METEO[0], _open_meteo), (OPEN_ELEVATION[0], _open_elevation)]
+PROVIDERS = [(SRTM[0], _srtm), (OPEN_METEO[0], _open_meteo), (OPEN_ELEVATION[0], _open_elevation)]
 
 
 def _describe(exc):
@@ -104,15 +140,25 @@ def _describe(exc):
     return f"{type(exc).__name__}: {exc}"
 
 
-def get_elevation_gain(coords, osm_id=None):
-    """Return {source, elevation_gain_m, points_sampled, checked_at} or an unavailable dict.
+def cached_entry(coords, osm_id=None):
+    """The cached result for a trail, or None (never touches the network)."""
+    try:
+        return _load().get(cache_key(osm_id, _sample([[float(p[0]), float(p[1])] for p in coords])))
+    except (TypeError, ValueError, IndexError):
+        return None
 
-    elevation_gain_m is the sum of positive differences between consecutive sampled points (up to 100).
-    Tries Open-Meteo, then Open-Elevation (no retries; a 429 moves straight to the fallback). Results are
-    cached on disk forever; "source" names the provider that measured it.
+
+def get_elevation_gain(coords, osm_id=None):
+    """Return {source, elevation_gain_m, elevation_loss_m, min_m, max_m, profile, points_sampled, checked_at} or
+    an unavailable dict (entries cached before profiles existed have only source/elevation_gain_m/points_sampled).
+
+    elevation_gain_m / elevation_loss_m are the sums of the rises / drops between consecutive sampled points (up to
+    100); profile is [[km along the trail, m], ...]. Tries NASA SRTM via OpenTopoData, then Open-Meteo, then
+    Open-Elevation (no retries; any failure moves to the next). Cached on disk forever; "source" names the provider.
     """
     try:
-        points = _sample([[float(p[0]), float(p[1])] for p in coords])
+        full = [[float(p[0]), float(p[1])] for p in coords]
+        points = _sample(full)
         if len(points) < 2:
             return unavailable(SOURCE, "Need at least two coordinates")
         key = cache_key(osm_id, points)
@@ -132,19 +178,27 @@ def get_elevation_gain(coords, osm_id=None):
                 failures.append(f"{name}: expected {len(points)} elevations, got {len(heights)}")
                 continue
             gain = sum(max(0.0, b - a) for a, b in zip(heights, heights[1:]))
-            entry = {"source": name, "elevation_gain_m": round(gain), "points_sampled": len(points)}
+            loss = sum(max(0.0, a - b) for a, b in zip(heights, heights[1:]))
+            entry = {"source": name, "elevation_gain_m": round(gain), "elevation_loss_m": round(loss),
+                     "min_m": round(min(heights)), "max_m": round(max(heights)), "points_sampled": len(points),
+                     "profile": [[round(k, 3), round(h, 1)] for k, h in zip(_sample_km(full), heights)]}
             _store(key, entry)
             return {**entry, "checked_at": now_iso()}
-        return unavailable("Elevation (Open-Meteo, Open-Elevation)", "; ".join(failures))
+        return unavailable("Elevation (NASA SRTM via OpenTopoData, Open-Meteo, Open-Elevation)", "; ".join(failures))
     except Exception as exc:  # noqa: BLE001
         return unavailable(SOURCE, f"{type(exc).__name__}: {exc}")
 
 
-def precompute(fixture=None, pause_s=PRECOMPUTE_PAUSE_S):
-    """Compute elevation for every trail in the saved Ypsilanti snapshot (cached trails are skipped).
-    Pauses between network lookups because the public providers rate-limit bursts. Returns (done, failed)."""
-    from backend.tools.trails import YPSILANTI_FIXTURE, _parse_trails
-    trails = _parse_trails(json.loads(Path(fixture or YPSILANTI_FIXTURE).read_text(encoding="utf-8")))
+def precompute(fixture=None, pause_s=PRECOMPUTE_PAUSE_S, seeds=False):
+    """Compute elevation for every trail in the saved Ypsilanti snapshot, or (seeds=True) in every seeded snapshot
+    (backend/data/trail_snapshots/); cached trails are skipped. Pauses between network lookups because the public
+    providers rate-limit bursts. Returns (done, failed)."""
+    from backend.tools.trails import SEED_DIR, YPSILANTI_FIXTURE, _parse_anywhere, _parse_trails
+    if seeds:
+        trails = [t for path in sorted(SEED_DIR.glob("*.json"))
+                  for t in _parse_anywhere(json.loads(path.read_text(encoding="utf-8"))["payload"])]
+    else:
+        trails = _parse_trails(json.loads(Path(fixture or YPSILANTI_FIXTURE).read_text(encoding="utf-8")))
     done = failed = 0
     for trail in trails:
         points = _sample([[float(p[0]), float(p[1])] for p in trail["coords"]])
@@ -164,8 +218,8 @@ def precompute(fixture=None, pause_s=PRECOMPUTE_PAUSE_S):
 
 if __name__ == "__main__":
     import sys
-    if sys.argv[1:] != ["precompute"]:
-        print("usage: python -m backend.tools.elevation precompute")
+    if sys.argv[1:] not in (["precompute"], ["precompute", "seeds"]):
+        print("usage: python -m backend.tools.elevation precompute [seeds]")
         sys.exit(2)
     logging.basicConfig(level=logging.ERROR)
-    sys.exit(1 if precompute()[1] else 0)
+    sys.exit(1 if precompute(seeds=sys.argv[2:] == ["seeds"])[1] else 0)
