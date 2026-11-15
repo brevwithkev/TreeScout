@@ -262,7 +262,7 @@ class GeocodeTests(unittest.TestCase):
         self.assertEqual((found["found"], found["lat"], found["lon"]), (True, 51.175076, -115.5720773))
         url, params, headers = self.calls[0]
         self.assertEqual(url, "https://nominatim.openstreetmap.org/search")
-        self.assertEqual(params, {"q": "Banff, Alberta", "format": "json", "limit": 1})
+        self.assertEqual(params, {"q": "Banff, Alberta", "format": "json", "limit": 5})
         self.assertEqual(headers["User-Agent"], common.USER_AGENT)
         self.assertEqual(geocode.geocode("banff, alberta"), found)            # cached forever, case-insensitive
         self.assertEqual(len(self.calls), 1)
@@ -302,6 +302,140 @@ class MountainPathAndTimezoneTests(unittest.TestCase):
         self.assertEqual(str(common.timezone_for(*CENTERS["banff"])), "America/Edmonton")
         self.assertTrue(str(common.timezone_for(*CENTERS["antarctica"])))     # some zone, never a crash
         self.assertEqual(str(common.timezone_for("x", None)), "America/Detroit")
+
+
+GC_VILLAGE = (36.0545, -112.1406)   # Grand Canyon Village (Nominatim place=village)
+GC_FAMOUS = ("Bright Angel", "South Kaibab")
+
+
+def gc_overpass():
+    """Overpass answered from the saved Grand Canyon fixtures (village and canyon points, 10 km)."""
+    answers = {}
+    for nominatim, slug in (("nominatim_grand_canyon_village_5.json", "gc_village"),
+                            ("nominatim_grand_canyon_5.json", "gc_valley")):
+        hit = geocode.pick_best(fixture(nominatim))
+        box = ",".join(map(str, trails._bbox(round(float(hit["lat"]), 4), round(float(hit["lon"]), 4), 10)))
+        answers[box] = fixture(f"overpass_{slug}_10km.json")
+
+    def answer(query):
+        for box, payload in answers.items():
+            if f"({box});" in query:
+                return payload
+        raise AssertionError(f"unexpected Overpass query {query[:120]}")
+    return answer
+
+
+GC_NOMINATIM = {"Grand Canyon Village, Arizona, USA": fixture("nominatim_grand_canyon_village_5.json"),
+                "Grand Canyon": fixture("nominatim_grand_canyon_5.json")}
+
+
+class GeocodeQualityTests(unittest.TestCase):
+    def test_prefers_the_village_over_a_census_boundary(self):
+        hits = fixture("nominatim_grand_canyon_village_5.json")
+        self.assertEqual([(h["class"], h["type"]) for h in hits], [("boundary", "census"), ("place", "village")])
+        best = geocode.pick_best(hits)
+        self.assertEqual((best["class"], best["type"]), ("place", "village"))
+
+    def test_settlement_boundary_counts_as_a_town(self):
+        best = geocode.pick_best(fixture("nominatim_banff_5.json"))
+        self.assertEqual((best["class"], best.get("addresstype")), ("boundary", "town"))
+        self.assertEqual(geocode.rank(best), 0)
+
+    def test_natural_features_rank_last(self):
+        cliff = {"class": "natural", "type": "cliff"}
+        trailhead = {"class": "highway", "type": "trailhead"}
+        park = {"class": "boundary", "type": "national_park"}
+        other = {"class": "tourism", "type": "viewpoint"}
+        self.assertIs(geocode.pick_best([cliff, other, park]), park)
+        self.assertIs(geocode.pick_best([cliff, trailhead]), trailhead)
+        self.assertIs(geocode.pick_best([cliff, other]), other)
+        self.assertIs(geocode.pick_best([cliff]), cliff)   # only natural features: the first one
+
+    def test_only_natural_results_keep_nominatims_first(self):
+        hits = fixture("nominatim_grand_canyon_5.json")   # "Grand Canyon": five canyons/gorges worldwide
+        self.assertTrue(all(h["class"] == "natural" for h in hits))
+        best = geocode.pick_best(hits)
+        self.assertEqual(best["display_name"], "Grand Canyon, Coconino County, Arizona, United States")
+
+    def test_prompt_asks_for_the_most_specific_hikeable_place(self):
+        prompt = agents.PLANNER_PROMPT.format(top_n=3, today="2026-11-15", weekday="Sunday", lat=42.0, lon=-83.0,
+                                              form="{}")
+        self.assertIn("most specific hikeable place for the request, with region and country", prompt)
+        self.assertIn('"Grand Canyon Village, Arizona, USA"', prompt)
+        self.assertIn('"Banff, Alberta, Canada"', prompt)
+
+    def gemini_plan(self, text, place):
+        from google.genai import types
+        from backend.test_agents import FakeGemini, FakeReply
+        answer = {"chosen_osm_id": None, "explanation": "?", "constraints": {"distance_km": 8, "place": place}}
+        fake = FakeGemini(lambda: FakeReply(json.dumps(answer)),
+                          checker=lambda: FakeReply('{"approved": true, "problems": []}'))
+        with patch("backend.agents._gemini", lambda: (fake, "gemini-test-flash", types)):
+            return agents.make_plan(text, 42.2411, -83.6130, form={"date": DATE})
+
+    def test_grand_canyon_resolves_to_the_village_and_finds_the_famous_trails(self):
+        with Offline(overpass=gc_overpass(), nominatim=GC_NOMINATIM) as off:
+            result = self.gemini_plan("An 8 km hike at the Grand Canyon tomorrow",
+                                      "Grand Canyon Village, Arizona, USA")
+            self.assertEqual(result["constraints"]["parsed_by"], "gemini")
+            self.assertEqual(off.places, ["Grand Canyon Village, Arizona, USA"])
+            self.assertIn("Nominatim: Grand Canyon Village, Arizona, USA -> 36.0545, -112.1406 "
+                          "(Grand Canyon Village, Coconino County, Arizona, United States)", summaries(result))
+            self.assertLess(trails.haversine(result["trail"]["coords"][0], GC_VILLAGE), 10)
+            found, _radius = trails.get_trails_anywhere(*GC_VILLAGE)       # the saved snapshot, no network
+        names = {t["name"] for t in found}
+        self.assertTrue(any(f in n for n in names for f in GC_FAMOUS), sorted(names))
+        village_box = ",".join(map(str, trails._bbox(*GC_VILLAGE, 10)))
+        self.assertEqual(sum(f"({village_box});" in q for q in off.queries), 1)  # then the saved snapshot
+
+    def test_grand_canyon_without_gemini(self):
+        # The rules pass the name as written; Nominatim returns only natural features for "Grand Canyon", so the
+        # canyon itself is used (about 6 km from the village). Its 10 km search still has the famous trails.
+        with Offline(overpass=gc_overpass(), nominatim=GC_NOMINATIM):
+            result = plan("8 km hike near Grand Canyon tomorrow")
+            self.assertLess(trails.haversine(result["trail"]["coords"][0], GC_VILLAGE), 15)
+            hit = geocode.pick_best(GC_NOMINATIM["Grand Canyon"])
+            found, _radius = trails.get_trails_anywhere(round(float(hit["lat"]), 4), round(float(hit["lon"]), 4))
+        self.assertLess(trails.haversine((float(hit["lat"]), float(hit["lon"])), GC_VILLAGE), 8)
+        self.assertTrue(any(f in t["name"] for t in found for f in GC_FAMOUS))
+
+
+class TzdataTests(unittest.TestCase):
+    """zoneinfo reads only the tzdata package (common.py resets TZPATH), so every machine agrees."""
+
+    def offset(self, zone, when):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.fromisoformat(when).replace(tzinfo=ZoneInfo(zone)).utcoffset().total_seconds() / 3600
+
+    def test_zoneinfo_uses_the_tzdata_package(self):
+        import importlib.metadata
+        import zoneinfo
+        self.assertEqual(zoneinfo.TZPATH, ())
+        version = tuple(int(x) for x in importlib.metadata.version("tzdata").split(".")[:2])
+        self.assertGreaterEqual(version, (2026, 6))
+
+    def test_phoenix_is_utc_minus_7_with_no_dst(self):
+        self.assertEqual(self.offset("America/Phoenix", "2026-11-15T12:00"), -7)
+        self.assertEqual(self.offset("America/Phoenix", "2026-07-01T12:00"), -7)
+
+    def test_edmonton_follows_tzdata(self):
+        # tzdata 2026.6 has Alberta on UTC-06:00 all year (no change back to UTC-07:00 in November).
+        self.assertEqual(self.offset("America/Edmonton", "2026-11-15T12:00"), -6)
+        self.assertEqual(self.offset("America/Edmonton", "2026-07-01T12:00"), -6)
+        self.assertEqual(self.offset("America/Detroit", "2026-11-15T12:00"), -5)   # Detroit still changes
+        self.assertEqual(self.offset("America/Detroit", "2026-07-01T12:00"), -4)
+
+    def test_banff_sunset_is_the_utc_sunset_in_local_time(self):
+        from datetime import date, timedelta, timezone
+        from astral import Observer
+        from astral.sun import sunset
+        with Offline(overpass=saved_overpass(), nominatim=NOMINATIM):
+            result = plan("Easy 6 km hike near Banff, Alberta tomorrow")
+        lat, lon = result["trail"]["coords"][0]
+        utc = sunset(Observer(latitude=lat, longitude=lon), date=date.fromisoformat(DATE), tzinfo=timezone.utc)
+        self.assertEqual(result["timing"]["sunset"], (utc - timedelta(hours=6)).strftime("%H:%M"))
+        self.assertEqual(utc.strftime("%H"), "23")   # about 23:47 UTC: 16:47 by the sun's clock, 17:47 at UTC-6
 
 
 class YpsilantiUnchangedTests(unittest.TestCase):

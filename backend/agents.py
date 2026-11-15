@@ -402,8 +402,9 @@ def _json_from_text(text):
 
 
 PLANNER_TOOLS = [
-    ("get_trails", "Named hiking trails >= 1 km near a place (OpenStreetMap). Give the place NAME as written in the "
-                   "request (e.g. \"Banff, Alberta\"); TrekChek looks it up. Call first.",
+    ("get_trails", "Named hiking trails >= 1 km near a place (OpenStreetMap). Give the most specific hikeable place "
+                   "NAME with region and country (e.g. \"Grand Canyon Village, Arizona, USA\"); TrekChek looks it up. "
+                   "Call first.",
      {"place": "string"}, ["place"]),
     ("rank_trails", "Score the trails from get_trails against the constraints (0-1), around the last get_trails place.",
      {"distance_km": "number", "prefs": "array"}, ["distance_km"]),
@@ -437,7 +438,7 @@ Today is {today} ({weekday}). Times are local to the place. If the request names
 hiker's location ({lat}, {lon}).
 
 Steps:
-1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), and place: the place NAME the request mentions, as a search string (e.g. "Grand Canyon South Rim", "Banff, Alberta"), or null if it names none. Never give coordinates: TrekChek looks the name up.
+1. Extract constraints from the request: distance_km, date (YYYY-MM-DD), start (HH:MM, 24 h), prefs (subset of easy, hilly, shaded, dog-friendly), and place: the most specific hikeable place for the request, with region and country, as a search string (e.g. "Grand Canyon Village, Arizona, USA" for the Grand Canyon, "Banff, Alberta, Canada"): a town, village, park or trailhead rather than a natural feature such as a canyon or cliff. null if the request names no place. Never give coordinates: TrekChek looks the name up.
    These form values were set explicitly by the user and override the text: {form}
 2. If get_trails finds no trails (or the place cannot be found), answer with "chosen_osm_id": null.
 3. TrekChek has already run the tools for the area and constraints it guessed from the request; their results are in the

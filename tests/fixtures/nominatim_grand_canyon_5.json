@@ -1,0 +1,107 @@
+[
+ {
+  "place_id": 320870378,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 150980731,
+  "lat": "36.0980405",
+  "lon": "-112.0962787",
+  "class": "natural",
+  "type": "valley",
+  "place_rank": 22,
+  "importance": 0.567005539326522,
+  "addresstype": "valley",
+  "name": "Grand Canyon",
+  "display_name": "Grand Canyon, Coconino County, Arizona, United States",
+  "boundingbox": [
+   "36.0979905",
+   "36.0980905",
+   "-112.0963287",
+   "-112.0962287"
+  ]
+ },
+ {
+  "place_id": 205877368,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 1028201801,
+  "lat": "44.5275369",
+  "lon": "34.0128887",
+  "class": "natural",
+  "type": "gorge",
+  "place_rank": 22,
+  "importance": 0.37878580059237354,
+  "addresstype": "gorge",
+  "name": "Большой каньон Крыма",
+  "display_name": "Большой каньон Крыма, Голубинское сельское поселение, Bakhchysarai Raion, Autonomous Republic of Crimea, Ukraine",
+  "boundingbox": [
+   "44.5182047",
+   "44.5371123",
+   "33.9930725",
+   "34.0450000"
+  ]
+ },
+ {
+  "place_id": 254681502,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "way",
+  "osm_id": 1209305431,
+  "lat": "2.7153654",
+  "lon": "101.8840643",
+  "class": "natural",
+  "type": "gorge",
+  "place_rank": 22,
+  "importance": 0.10671658579385059,
+  "addresstype": "gorge",
+  "name": "Grand Canyon",
+  "display_name": "Grand Canyon, Seremban 2 Heights, Seremban 2, Seremban, Negeri Sembilan, 70300, Malaysia",
+  "boundingbox": [
+   "2.7150773",
+   "2.7155232",
+   "101.8837906",
+   "101.8842486"
+  ]
+ },
+ {
+  "place_id": 23099463,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 410054393,
+  "lat": "-33.6589526",
+  "lon": "150.3177350",
+  "class": "natural",
+  "type": "valley",
+  "place_rank": 22,
+  "importance": 0.10671628519111923,
+  "addresstype": "valley",
+  "name": "Grand Canyon",
+  "display_name": "Grand Canyon, Blackheath, New South Wales, 2785, Australia",
+  "boundingbox": [
+   "-33.6590026",
+   "-33.6589026",
+   "150.3176850",
+   "150.3177850"
+  ]
+ },
+ {
+  "place_id": 369100715,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 1904852587,
+  "lat": "42.6610826",
+  "lon": "-81.2815021",
+  "class": "natural",
+  "type": "valley",
+  "place_rank": 22,
+  "importance": 0.10670540856031126,
+  "addresstype": "valley",
+  "name": "Grand Canyon",
+  "display_name": "Grand Canyon, Southwold, Elgin County, Southwestern Ontario, Ontario, N5L 1B6, Canada",
+  "boundingbox": [
+   "42.6610326",
+   "42.6611326",
+   "-81.2815521",
+   "-81.2814521"
+  ]
+ }
+]

@@ -1,0 +1,44 @@
+[
+ {
+  "place_id": 320858311,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "relation",
+  "osm_id": 8745849,
+  "lat": "36.0578070",
+  "lon": "-112.1281560",
+  "class": "boundary",
+  "type": "census",
+  "place_rank": 25,
+  "importance": 0.4323180864899549,
+  "addresstype": "census",
+  "name": "Grand Canyon Village",
+  "display_name": "Grand Canyon Village, Coconino County, Arizona, United States",
+  "boundingbox": [
+   "36.0040580",
+   "36.1114390",
+   "-112.2467480",
+   "-112.0806040"
+  ]
+ },
+ {
+  "place_id": 320808847,
+  "licence": "Data © OpenStreetMap contributors, ODbL 1.0. http://osm.org/copyright",
+  "osm_type": "node",
+  "osm_id": 150952317,
+  "lat": "36.0545151",
+  "lon": "-112.1406300",
+  "class": "place",
+  "type": "village",
+  "place_rank": 19,
+  "importance": 0.4323180864899549,
+  "addresstype": "village",
+  "name": "Grand Canyon Village",
+  "display_name": "Grand Canyon Village, Coconino County, Arizona, United States",
+  "boundingbox": [
+   "36.0345151",
+   "36.0745151",
+   "-112.1606300",
+   "-112.1206300"
+  ]
+ }
+]
