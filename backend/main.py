@@ -14,6 +14,7 @@ load_dotenv(ROOT / ".env")
 
 from backend.agents import make_plan  # noqa: E402  (after load_dotenv so agents see the keys)
 from backend.narration import check_late_pace, synthesize_tts  # noqa: E402
+from backend import demo  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -48,9 +49,34 @@ class PlanRequest(BaseModel):
 
 @app.post("/plan")
 def plan(body: PlanRequest):
-    """Planner + checker agents (or the rule-based fallback). Every field comes from live tools."""
+    """Planner + checker agents (or the rule-based fallback). Every field comes from live tools.
+
+    DEMO_MODE=1: a saved recording whose slug matches the request text is returned instantly (form fields
+    are ignored then). Every successful live plan is also saved to demo_data/plans/<slug>.json.
+    """
+    if demo.demo_mode():
+        recorded = demo.load_recording(demo.slugify(body.request))
+        if recorded is not None:
+            return recorded
     form = {"distance_km": body.distance_km, "date": body.date, "start": body.start, "prefs": body.prefs}
-    return make_plan(body.request, body.lat, body.lon, radius_km=body.radius_km, form=form)
+    result = make_plan(body.request, body.lat, body.lon, radius_km=body.radius_km, form=form)
+    demo.save_recording(result)
+    return result
+
+
+@app.get("/demo/plans")
+def demo_plans():
+    """Saved recordings, newest first: [{slug, request, recorded_at}]."""
+    return demo.list_recordings()
+
+
+@app.get("/demo/plans/{slug}")
+def demo_plan(slug: str):
+    """One saved recording (lets the frontend load it with one click, whatever DEMO_MODE is)."""
+    recorded = demo.load_recording(slug)
+    if recorded is None:
+        raise HTTPException(status_code=404, detail=f"No demo recording named {slug!r}")
+    return recorded
 
 
 class LateNarrationRequest(BaseModel):
@@ -71,9 +97,10 @@ def narrate_late(body: LateNarrationRequest):
 
 @app.post("/tts")
 def tts(body: TTSRequest) -> Response:
-    """MP3 speech for text via ElevenLabs (cached on disk). 502 if the key is missing or ElevenLabs fails."""
+    """MP3 speech for text via ElevenLabs (cached on disk). 502 if the key is missing or ElevenLabs fails.
+    DEMO_MODE=1: cached audio only; uncached text gets a 502 (the frontend shows captions instead)."""
     try:
-        audio = synthesize_tts(body.text)
+        audio = synthesize_tts(body.text, cache_only=demo.demo_mode())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

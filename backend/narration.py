@@ -169,11 +169,12 @@ def check_late_pace(plan, current_km, elapsed_min):
 # Text-to-speech (ElevenLabs)
 # ---------------------------------------------------------------------------------------------
 
-def synthesize_tts(text):
+def synthesize_tts(text, cache_only=False):
     """MP3 bytes for text from ElevenLabs, cached in cache/tts/<sha256>.mp3.
 
     Raises ValueError for empty text, RuntimeError when the key is missing or ElevenLabs fails.
     Voice: ELEVENLABS_VOICE_ID; model: ELEVENLABS_MODEL (default eleven_flash_v2_5).
+    cache_only=True (demo mode) never calls ElevenLabs: uncached text raises RuntimeError.
     """
     clean = (text or "").strip()
     if not clean:
@@ -185,6 +186,8 @@ def synthesize_tts(text):
     cache_path = TTS_CACHE_DIR / f"{digest}.mp3"
     if cache_path.exists() and cache_path.stat().st_size > 0:
         return cache_path.read_bytes()
+    if cache_only:
+        raise RuntimeError("Demo mode: no cached audio for this text")
 
     api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:

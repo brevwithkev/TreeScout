@@ -27,6 +27,10 @@ class TrailTests(unittest.TestCase):
         patcher = patch.object(trails, "DISK_CACHE_DIR", Path(self._tmp.name))
         patcher.start()
         self.addCleanup(patcher.stop)
+        # main.plan() records every successful plan; keep test plans out of the real demo_data/.
+        patcher = patch("backend.demo.PLANS_DIR", Path(self._tmp.name) / "plans")
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.addCleanup(self._tmp.cleanup)
 
     def test_stitch_reverses_and_prepends_segments(self):
