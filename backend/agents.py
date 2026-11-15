@@ -21,15 +21,18 @@ import os
 import re
 
 from backend.narration import generate_narration
+from backend.tools.alerts import get_nws_alerts
 from backend.tools.climate import get_climate
 from backend.tools.common import now_iso, unavailable
+from backend.tools.conditions import derive_conditions
 from backend.tools.elevation import get_elevation_gain
 from backend.tools.hazards import get_hazards
 from backend.tools.ranking import _is_loop, rank_trails
+from backend.tools.seasonal import get_seasonal_hazards
 from backend.tools.space_weather import get_space_weather
 from backend.tools.timing import compute_timing
 from backend.tools.trails import get_trails, haversine
-from backend.tools.weather import get_weather
+from backend.tools.weather import get_hike_window, get_weather
 
 logger = logging.getLogger("treescout.agents")
 
@@ -41,7 +44,9 @@ DEFAULT_START = "10:00"
 SEARCH_RADIUS_KM = 15
 HAZARD_RADIUS_KM = 100
 HAZARD_NEAR_KM = 5
-PRECIP_LIMIT = 70
+PRECIP_LIMIT = 70            # % chance of precipitation during the hike window (NWS hourly) that rejects a plan
+REJECT_SEVERITIES = ("Extreme", "Severe")  # NWS alert severities that reject a plan
+WARN_SEVERITIES = ("Moderate",)            # NWS alert severities shown as warnings
 MAX_ROUNDS = 2
 OUTSIDE = "Outside our coverage area (southeast Michigan)"
 COVERAGE = {"lat": (41.70, 43.40), "lon": (-84.70, -82.40)}  # southeast Michigan
@@ -131,6 +136,22 @@ def _summarize(name, result, args, label=None):
         return f"NASA DONKI: {result['storms']} geomagnetic storms {result['window']}{kp}; aurora chance {result['aurora_chance']}"
     if name == "get_elevation_gain":
         return f"{label or 'Route'}: {result['elevation_gain_m']} m elevation gain"
+    if name == "get_nws_alerts":
+        items = result["items"]
+        if not items:
+            return "NWS: no active alerts for this point"
+        return (f"NWS: {len(items)} active alert{'s' if len(items) != 1 else ''}; "
+                + "; ".join(f"{a['event']} ({a['severity']})" for a in items[:3]))
+    if name == "get_hike_window":
+        conditions = f" ({', '.join(result['conditions'])})" if result.get("conditions") else ""
+        return f"NWS hourly {result['window']}: {result['summary'].removeprefix('During your hike: ')}{conditions}"
+    if name == "get_seasonal_hazards":
+        titles = [i["title"] for i in result["items"]]
+        return f"Seasonal: {', '.join(titles)} on {args[0]}" if titles else f"Seasonal: nothing in season on {args[0]}"
+    if name == "derive_conditions":
+        if not result:
+            return "Trail conditions: no low light or freezing temperatures"
+        return "Trail conditions: " + ", ".join(c["title"] for c in result)
     if name == "compute_timing":
         return (f"{label + ': ' if label else ''}{result['start']} start, about {result['est_duration_min']} min; "
                 f"sunset {result['sunset']}, latest safe start {result['latest_safe_start']}")
@@ -403,8 +424,11 @@ trail and its distance in km and miles. There is no data about shade or dog rule
 
 CHECKER_PROMPT = """You are the TreeScout safety checker. Review this assembled day-hike plan (all values come from data tools).
 Approve unless the data shows a concrete safety problem: finishing after sunset, a start later than the latest safe start,
-an active natural hazard near the trail, a high chance of precipitation, or a forecast that is dangerous for the hike
-(for example thunderstorms or temperatures below freezing with precipitation). Missing data alone is not a problem.
+an active natural hazard near the trail, a Severe or Extreme NWS alert, a high chance of precipitation during the hike
+(judge rain by hike_window.max_precip_chance, the NWS hourly forecast for the hike's hours, not the daily weather), or a
+forecast that is dangerous for the hike (for example thunderstorms, or temperatures below freezing with precipitation).
+Moderate or Minor alerts, seasonal items (such as hunting season) and trail conditions (low light, freezing temperatures
+alone) are shown to the hiker as warnings: they are not reasons to reject. Missing data alone is not a problem.
 Each problem is one sentence that quotes the numbers. Do not invent data."""
 
 
@@ -487,6 +511,20 @@ class PlanContext:
         lat, lon = trail["coords"][0]
         return self.tools.submit("compute_timing", compute_timing, trail["distance_km"], gain, lat, lon, day, start,
                                  label=trail["name"])
+
+    def alerts(self, area):
+        return self.tools.submit("get_nws_alerts", get_nws_alerts, round(area[0], 4), round(area[1], 4))
+
+    def seasonal(self, area, day):
+        return self.tools.submit("get_seasonal_hazards", get_seasonal_hazards, day, round(area[0], 4),
+                                 round(area[1], 4))
+
+    def hike_window(self, area, day, timing):
+        """NWS hourly summary for start .. start + est_duration_min (unavailable without timing)."""
+        if _failed(timing):
+            return _Later(lambda: unavailable("NWS hourly", "No hike timing to look up"))
+        return self.tools.submit("get_hike_window", get_hike_window, round(area[0], 4), round(area[1], 4), day,
+                                 timing["start"], timing["est_duration_min"])
 
     def rank(self, items, constraints, lat, lon):
         def run(_key):
@@ -660,9 +698,12 @@ def _plan(ctx):
         weather = ctx.tools.submit("get_weather", get_weather, *here, constraints["date"])
         climate = ctx.tools.submit("get_climate", get_climate, *here, constraints["date"])
         hazards = ctx.tools.submit("get_hazards", get_hazards, *here, HAZARD_RADIUS_KM)
+        extra = {"alerts": ctx.alerts(area).result(), "seasonal": ctx.seasonal(area, constraints["date"]).result(),
+                 "hike_window": unavailable("NWS hourly", "No trail chosen, so there is no hike window"),
+                 "conditions": []}
         return _response(ctx, constraints, parsed_by, trail_section, [], message, None, weather.result(),
                          climate.result(), space.result(), hazards.result(), {"approved": False, "rounds": 0},
-                         [message])
+                         [message] + _advisories(extra), extra)
 
     # Rank, then add elevation for the top candidates and re-rank (elevation feeds the easy/hilly score).
     ranked = ctx.rank(trails["items"], constraints, *area)
@@ -741,6 +782,7 @@ def _plan(ctx):
     far = _distance_warning(plan["constraints"]["distance_km"], distance_given, trails["items"], plan["trail"])
     if far:
         warnings.insert(0, far)
+    warnings += [w for w in _advisories(plan) if w not in warnings]
     now = datetime.now(TZ)
     if plan["constraints"]["date"] == now.date().isoformat() and plan["constraints"]["start"] < now.strftime("%H:%M"):
         warnings.append(f"The {plan['constraints']['start']} start time has already passed today.")
@@ -748,7 +790,8 @@ def _plan(ctx):
                     for t in ranked if t["osm_id"] != plan["trail"]["osm_id"]][:2]
     return _response(ctx, plan["constraints"], parsed_by, plan["trail"], alternatives, explanation, plan["timing"],
                      plan["weather"], plan["climate"], space.result(), plan["hazards"],
-                     {"approved": approved, "rounds": len(attempts)}, warnings)
+                     {"approved": approved, "rounds": len(attempts)}, warnings,
+                     {k: plan[k] for k in ("alerts", "hike_window", "seasonal", "conditions")})
 
 
 def _prefetch_context(ctx, area, constraints, space):
@@ -770,7 +813,10 @@ def _prefetch_context(ctx, area, constraints, space):
             top = ranked[0]
             out["compute_timing_for_top"] = ctx.timing(top, top.get("elevation_gain_m"), constraints["date"],
                                                        constraints["start"]).result()
+            ctx.hike_window(area, constraints["date"], out["compute_timing_for_top"])  # warms the NWS hourly cache
         here = (round(area[0], 4), round(area[1], 4))
+        ctx.alerts(area)  # not shown to the planner; started now so _assemble usually finds them done
+        ctx.seasonal(area, constraints["date"])
         futures = {
             "get_weather": ctx.tools.submit("get_weather", get_weather, *here, constraints["date"]),
             "get_climate": ctx.tools.submit("get_climate", get_climate, *here, constraints["date"]),
@@ -826,16 +872,20 @@ def _assemble(ctx, trail, constraints, area):
     weather = ctx.tools.submit("get_weather", get_weather, round(area[0], 4), round(area[1], 4), constraints["date"])
     climate = ctx.tools.submit("get_climate", get_climate, round(area[0], 4), round(area[1], 4), constraints["date"])
     hazards = ctx.tools.submit("get_hazards", get_hazards, round(area[0], 4), round(area[1], 4), HAZARD_RADIUS_KM)
+    alerts, seasonal = ctx.alerts(area), ctx.seasonal(area, constraints["date"])
     gain = gain_f.result()
     gain_m = None if _failed(gain) else gain["elevation_gain_m"]
     gain_source = None if _failed(gain) else gain.get("source")
     timing = ctx.timing(trail, gain_m, constraints["date"], constraints["start"]).result()
+    window = ctx.hike_window(area, constraints["date"], timing).result()
+    conditions = ctx.tools.call("derive_conditions", derive_conditions, timing, window)
     return {
         "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": trail["distance_km"],
                   "elevation_gain_m": gain_m, "coords": trail["coords"],
                   "elevation_source": gain_source},  # extra field (not in mock_plan.json): card label
         "score": trail.get("score", 0.0), "constraints": dict(constraints),
         "timing": timing, "weather": weather.result(), "climate": climate.result(), "hazards": hazards.result(),
+        "alerts": alerts.result(), "hike_window": window, "seasonal": seasonal.result(), "conditions": conditions,
     }
 
 
@@ -846,9 +896,35 @@ def _hard_checks(plan):
         problems.append(timing["warning"])
     for h, d in _hazards_near_route(plan["hazards"], plan["trail"]["coords"], HAZARD_NEAR_KM):
         problems.append(f"Active NASA EONET event {h['title']} ({h['type']}) is {d:.1f} km from the trail.")
-    if not _failed(weather) and (weather.get("precip_chance") or 0) >= PRECIP_LIMIT:
+    alerts, window = plan.get("alerts"), plan.get("hike_window")
+    if alerts is not None and not _failed(alerts):
+        for a in alerts["items"]:
+            if a["severity"] in REJECT_SEVERITIES:
+                problems.append(f"NWS {a['event']} ({a['severity']}) is in effect: {a['headline']}")
+    if window is not None and not _failed(window):
+        if window["max_precip_chance"] >= PRECIP_LIMIT:
+            problems.append(f"NWS hourly forecasts up to a {window['max_precip_chance']}% chance of precipitation "
+                            f"during the hike ({window['window']}).")
+        thunder = [c for c in window.get("conditions") or [] if "thunder" in c.lower()]
+        if thunder:
+            problems.append(f"NWS hourly forecasts thunder during the hike ({window['window']}): {', '.join(thunder)}.")
+    elif not _failed(weather) and (weather.get("precip_chance") or 0) >= PRECIP_LIMIT:
+        # No hourly forecast for the hike window: fall back to the daily forecast.
         problems.append(f"NWS forecasts a {weather['precip_chance']}% chance of precipitation ({weather['summary']}).")
     return problems
+
+
+def _advisories(plan):
+    """Warnings that never reject a plan: Moderate NWS alerts, seasonal items and trail conditions."""
+    out = []
+    alerts, seasonal = plan.get("alerts"), plan.get("seasonal")
+    if alerts is not None and not _failed(alerts):
+        out += [f"NWS {a['event']} ({a['severity']}): {a['headline']}" for a in alerts["items"]
+                if a["severity"] in WARN_SEVERITIES]
+    if seasonal is not None and not _failed(seasonal):
+        out += [f"{i['title']}: {i['advice']}." for i in seasonal["items"]]
+    out += [f"{c['title']}: {c['advice']}." for c in plan.get("conditions") or []]
+    return out
 
 
 def _checker_view(plan, constraints):
@@ -858,6 +934,9 @@ def _checker_view(plan, constraints):
     view["hazards"] = hz if _failed(hz) else [
         {"title": h["title"], "type": h["type"], "km_from_trail": round(d, 1)}
         for h, d in _hazards_near_route(hz, plan["trail"]["coords"], HAZARD_RADIUS_KM)][:10]
+    alerts = plan.get("alerts")
+    if alerts is not None and not _failed(alerts):
+        view["alerts"] = [{k: a[k] for k in ("event", "severity", "headline")} for a in alerts["items"][:5]]
     view["constraints"] = constraints
     return view
 
@@ -898,8 +977,13 @@ def _approval_line(plan):
         bits.append(f"{t['start']} start is no later than the {t['latest_safe_start']} latest safe start")
     bits.append("NASA EONET hazards unavailable" if _failed(plan["hazards"])
                 else f"no NASA EONET events within {HAZARD_NEAR_KM} km")
-    if not _failed(w):
+    window, alerts = plan.get("hike_window"), plan.get("alerts")
+    if window is not None and not _failed(window):
+        bits.append(f"{window['max_precip_chance']}% chance of precipitation during the hike")
+    elif not _failed(w):
         bits.append(f"{w['precip_chance']}% chance of precipitation")
+    if alerts is not None and not _failed(alerts):
+        bits.append("no Severe or Extreme NWS alerts")
     return "; ".join(bits)
 
 
@@ -992,8 +1076,16 @@ def _section(result, keys, source=None, error=None):
     return {k: result.get(k) for k in keys}
 
 
+ALERT_KEYS = ("source", "items", "checked_at")
+WINDOW_KEYS = ("source", "window", "max_precip_chance", "min_temp_f", "max_temp_f", "max_wind_mph", "conditions",
+               "summary", "checked_at")
+SEASONAL_KEYS = ("source", "items", "checked_at")
+
+
 def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, timing, weather, climate, space,
-              hazards, checker, warnings):
+              hazards, checker, warnings, extra=None):
+    """extra: the alerts, hike_window, seasonal and conditions results (None outside our coverage area)."""
+    extra = extra or {}
     outside = trail is None
     error = OUTSIDE if outside and OUTSIDE in warnings else (warnings[0] if warnings else None)
     if hazards is None:
@@ -1019,6 +1111,10 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "space_weather": _section(space, SPACE_KEYS, "NASA DONKI", error),
         "hazards": hazards_out,
         "hazards_checked_at": hazards_at,
+        "alerts": _section(extra.get("alerts"), ALERT_KEYS, "NWS", error),
+        "hike_window": _section(extra.get("hike_window"), WINDOW_KEYS, "NWS hourly", error),
+        "seasonal": _section(extra.get("seasonal"), SEASONAL_KEYS, "TreeScout seasonal calendar", error),
+        "conditions": list(extra.get("conditions") or []),
         "reports": [],
         "agent_trace": ctx.trace.items,
         "checker": checker,

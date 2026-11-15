@@ -103,6 +103,11 @@ class TrailTests(unittest.TestCase):
                                           "aurora_chance": "low", "window": "w", "checked_at": "t"},
             "get_elevation_gain": lambda c, osm_id=None: {"source": "Open-Meteo", "elevation_gain_m": 12,
                                                           "checked_at": "t"},
+            "get_nws_alerts": lambda lat, lon: {"source": "NWS", "items": [], "checked_at": "t"},
+            "get_hike_window": lambda lat, lon, d, start, minutes: {"available": False, "source": "NWS hourly",
+                                                                    "error": "boom", "checked_at": "t"},
+            "get_seasonal_hazards": lambda d, lat, lon: {"source": "TreeScout seasonal calendar", "items": [],
+                                                         "checked_at": "t"},
         }
         patches = [patch(f"backend.agents.{name}", fake) for name, fake in fakes.items()]
         patches.append(patch.dict("os.environ", {"GEMINI_API_KEY": ""}))

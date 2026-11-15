@@ -21,6 +21,12 @@ FAKE_TOOLS = {
     "get_space_weather": lambda: {"source": "NASA DONKI", "kp_max": None, "storms": 0, "aurora_chance": "low",
                                   "window": "w", "checked_at": "t"},
     "get_elevation_gain": lambda c, osm_id=None: {"source": "Open-Meteo", "elevation_gain_m": 12, "checked_at": "t"},
+    "get_nws_alerts": lambda lat, lon: {"source": "NWS", "items": [], "checked_at": "t"},
+    "get_hike_window": lambda lat, lon, d, start, minutes: {
+        "source": "NWS hourly", "window": "10:00-10:30", "max_precip_chance": 10, "min_temp_f": 45, "max_temp_f": 50,
+        "max_wind_mph": 5, "conditions": ["Sunny"], "summary": "During your hike: 10% rain, 45-50F, wind 5 mph",
+        "checked_at": "t"},
+    "get_seasonal_hazards": lambda d, lat, lon: {"source": "TreeScout seasonal calendar", "items": [], "checked_at": "t"},
 }
 
 
@@ -360,6 +366,107 @@ class DistanceWarningTests(unittest.TestCase):
     def test_no_warning_for_the_default_distance(self):
         result = agents.make_plan("A walk near Ypsilanti tomorrow", 42.0, -83.0)  # default 8 km, not asked
         self.assertFalse([w for w in result["warnings"] if w.startswith("No trail near")])
+
+
+SEVERE = {"event": "Tornado Warning", "severity": "Severe", "headline": "Tornado Warning until 3:00PM EST",
+          "onset": None, "ends": None, "link": "https://api.weather.gov/alerts/x"}
+MODERATE = {"event": "Winter Weather Advisory", "severity": "Moderate", "headline": "Winter Weather Advisory until 7PM",
+            "onset": None, "ends": None, "link": "https://api.weather.gov/alerts/y"}
+DEER = {"title": "Firearm deer season", "advice": "Wear blaze orange; hunters are common near state game areas",
+        "source": "Michigan DNR season dates", "link": "https://www.michigan.gov/dnr/things-to-do/hunting/deer"}
+
+
+class HazardCheckerTests(unittest.TestCase):
+    """Phase H: NWS alerts, the NWS hourly hike window, seasonal items and conditions (rule-based planner)."""
+
+    setUp = StartMovedTests.setUp
+
+    def plan(self, text="2 km walk near Ypsilanti starting at 10 AM tomorrow", alerts=(), window=None, seasonal=(),
+             daily_precip=10):
+        fake_window = dict(FAKE_TOOLS["get_hike_window"](0, 0, "", "", 0), **(window or {}))
+        patches = [
+            patch("backend.agents.get_nws_alerts", lambda lat, lon: {"source": "NWS", "items": list(alerts),
+                                                                     "checked_at": "t"}),
+            patch("backend.agents.get_hike_window", lambda *a: fake_window),
+            patch("backend.agents.get_seasonal_hazards", lambda d, lat, lon: {
+                "source": "TreeScout seasonal calendar", "items": list(seasonal), "checked_at": "t"}),
+            patch("backend.agents.get_weather", lambda lat, lon, d: {
+                "source": "NWS", "summary": "Rain, 50F", "precip_chance": daily_precip, "checked_at": "t"}),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return agents.make_plan(text, 42.0, -83.0)
+
+    def rejections(self, result):
+        return [e["summary"] for e in result["agent_trace"] if e["agent"] == "checker" and e["step"] == "reject"]
+
+    def test_new_fields_and_a_trace_line_per_tool(self):
+        result = self.plan()
+        self.assertEqual(result["alerts"], {"source": "NWS", "items": [], "checked_at": "t"})
+        self.assertEqual(result["hike_window"]["summary"], "During your hike: 10% rain, 45-50F, wind 5 mph")
+        self.assertEqual(result["seasonal"]["items"], [])
+        self.assertEqual(result["conditions"], [])
+        tools = {e.get("tool") for e in result["agent_trace"]}
+        self.assertTrue({"get_nws_alerts", "get_hike_window", "get_seasonal_hazards", "derive_conditions"} <= tools)
+        self.assertTrue(result["checker"]["approved"])
+
+    def test_severe_alert_rejects(self):
+        result = self.plan(alerts=[SEVERE])
+        self.assertFalse(result["checker"]["approved"])
+        self.assertIn("NWS Tornado Warning (Severe) is in effect: Tornado Warning until 3:00PM EST",
+                      self.rejections(result))
+        self.assertIn("NWS Tornado Warning (Severe) is in effect: Tornado Warning until 3:00PM EST", result["warnings"])
+
+    def test_extreme_alert_rejects(self):
+        self.assertFalse(self.plan(alerts=[{**SEVERE, "severity": "Extreme"}])["checker"]["approved"])
+
+    def test_hike_window_rain_of_70_percent_rejects(self):
+        result = self.plan(window={"max_precip_chance": 70})
+        self.assertFalse(result["checker"]["approved"])
+        self.assertIn("NWS hourly forecasts up to a 70% chance of precipitation during the hike (10:00-10:30).",
+                      self.rejections(result))
+        self.assertTrue(self.plan(window={"max_precip_chance": 69})["checker"]["approved"])
+
+    def test_hike_window_rain_replaces_the_daily_chance(self):
+        result = self.plan(daily_precip=90, window={"max_precip_chance": 10})  # rainy day, dry during the hike
+        self.assertTrue(result["checker"]["approved"])
+
+    def test_daily_chance_is_the_fallback_without_an_hourly_window(self):
+        with patch("backend.agents.get_hike_window", lambda *a: {"available": False, "source": "NWS hourly",
+                                                                 "error": "No NWS hourly forecast", "checked_at": "t"}):
+            result = agents.make_plan("2 km walk near Ypsilanti starting at 10 AM tomorrow", 42.0, -83.0)
+        self.assertTrue(result["checker"]["approved"])  # FAKE get_weather: 10%
+        self.assertEqual(result["hike_window"], {"available": False, "source": "NWS hourly",
+                                                 "error": "No NWS hourly forecast"})
+
+    def test_thunder_rejects(self):
+        result = self.plan(window={"conditions": ["Sunny", "Chance Showers And Thunderstorms"]})
+        self.assertFalse(result["checker"]["approved"])
+        self.assertTrue(any("thunder" in r for r in self.rejections(result)))
+
+    def test_moderate_alert_seasonal_and_conditions_are_warnings_not_rejections(self):
+        result = self.plan(alerts=[MODERATE], seasonal=[DEER], window={"min_temp_f": 30})
+        self.assertTrue(result["checker"]["approved"])
+        self.assertEqual(self.rejections(result), [])
+        self.assertEqual(result["warnings"], [
+            "NWS Winter Weather Advisory (Moderate): Winter Weather Advisory until 7PM",
+            "Firearm deer season: Wear blaze orange; hunters are common near state game areas.",
+            "Freezing temperatures: Down to 30F during your hike; watch for icy boardwalks.",
+        ])
+        self.assertEqual([c["title"] for c in result["conditions"]], ["Freezing temperatures"])
+
+    def test_late_start_moved_gets_low_light(self):
+        result = self.plan(text="2 km walk near Ypsilanti starting at 4:50 PM tomorrow")
+        self.assertIn("Low light", [c["title"] for c in result["conditions"]])
+        self.assertTrue(result["warnings"][0].startswith("You asked to start at 16:50; moved to"))
+
+    def test_outside_coverage_marks_the_new_sections_unavailable(self):
+        result = agents.make_plan("A hike in Antarctica tomorrow", 42.0, -83.0)
+        for key in ("alerts", "hike_window", "seasonal"):
+            self.assertIs(result[key]["available"], False, key)
+        self.assertEqual(result["conditions"], [])
+        self.assertEqual(result["warnings"], ["Outside our coverage area (southeast Michigan)"])
 
 
 if __name__ == "__main__":
