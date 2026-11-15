@@ -2,10 +2,10 @@
  "request": "A hike in Antarctica tomorrow",
  "constraints": {
   "distance_km": 8.0,
-  "date": "2026-11-15",
+  "date": "2026-11-16",
   "start": "10:00",
   "prefs": [],
-  "parsed_by": "rules"
+  "parsed_by": "gemini"
  },
  "trail": null,
  "alternatives": [],
@@ -29,7 +29,7 @@
   "source": "NASA DONKI",
   "kp_max": null,
   "aurora_chance": "low",
-  "checked_at": "2026-11-15T04:57:00Z"
+  "checked_at": "2026-11-15T05:53:52Z"
  },
  "hazards": {
   "available": false,
@@ -44,12 +44,12 @@
    "step": "tool",
    "tool": "get_space_weather",
    "summary": "NASA DONKI: 0 geomagnetic storms 2026-11-12 to 2026-11-16; aurora chance low",
-   "ms": 405
+   "ms": 763
   },
   {
    "agent": "planner",
-   "step": "fallback",
-   "summary": "LLM unavailable, used rule-based planner"
+   "step": "decide",
+   "summary": "Gemini proposed osm_id None"
   },
   {
    "agent": "planner",
@@ -66,5 +66,5 @@
   "Outside our coverage area (southeast Michigan)"
  ],
  "flood_or_burn_layer": null,
- "demo_recorded_at": "2026-11-15T04:57:05Z"
+ "demo_recorded_at": "2026-11-15T05:53:55Z"
 }
