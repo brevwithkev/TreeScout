@@ -147,13 +147,26 @@ class SeasonalTests(unittest.TestCase):
 
 
 class ConditionsTests(unittest.TestCase):
-    TIMING = {"source": "Computed", "start": "15:30", "est_duration_min": 60, "sunset": "17:10"}
+    TIMING = {"source": "Computed", "start": "15:45", "est_duration_min": 60, "sunset": "17:10",
+              "latest_safe_start": "15:40"}
 
-    def test_low_light_when_finishing_within_45_min_of_sunset(self):
-        found = conditions.derive_conditions(self.TIMING, None)  # finish 16:30, 40 min before sunset
+    def test_low_light_uses_the_30_min_start_buffer(self):
+        found = conditions.derive_conditions(self.TIMING, None)  # finish 16:45, 25 min before sunset
         self.assertEqual([c["title"] for c in found], ["Low light"])
         self.assertEqual(set(found[0]), {"title", "advice", "source"})
+        self.assertIn("within 30 min of sunset", found[0]["advice"])
+        at_safe = {**self.TIMING, "start": "15:40"}           # exactly the latest safe start: 30 min margin
+        self.assertEqual(conditions.derive_conditions(at_safe, None), [])
         self.assertEqual(conditions.derive_conditions({**self.TIMING, "start": "15:20"}, None), [])  # 50 min
+
+    def test_start_at_latest_safe_start_is_not_low_light_despite_rounding(self):
+        # 93.6 min hike, sunset 17:11:40 -> latest safe 15:08 (floored), est 94 min: finish 16:42 looks 29 min early.
+        timing = {"start": "15:08", "est_duration_min": 94, "sunset": "17:11", "latest_safe_start": "15:08"}
+        self.assertEqual(conditions.derive_conditions(timing, None), [])
+
+    def test_margin_fallback_without_latest_safe_start(self):
+        timing = {k: v for k, v in self.TIMING.items() if k != "latest_safe_start"}
+        self.assertEqual([c["title"] for c in conditions.derive_conditions(timing, None)], ["Low light"])
 
     def test_freezing(self):
         window = {"source": "NWS hourly", "min_temp_f": 32}

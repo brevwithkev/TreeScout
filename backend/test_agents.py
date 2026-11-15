@@ -456,10 +456,20 @@ class HazardCheckerTests(unittest.TestCase):
         ])
         self.assertEqual([c["title"] for c in result["conditions"]], ["Freezing temperatures"])
 
-    def test_late_start_moved_gets_low_light(self):
+    def test_start_moved_by_the_planner_is_not_low_light(self):
         result = self.plan(text="2 km walk near Ypsilanti starting at 4:50 PM tomorrow")
-        self.assertIn("Low light", [c["title"] for c in result["conditions"]])
+        self.assertEqual(result["timing"]["start"], result["timing"]["latest_safe_start"])
+        self.assertNotIn("Low light", [c["title"] for c in result["conditions"]])
+        self.assertFalse([w for w in result["warnings"] if w.startswith("Low light")])
         self.assertTrue(result["warnings"][0].startswith("You asked to start at 16:50; moved to"))
+
+    def test_late_start_that_cannot_be_fixed_is_low_light(self):
+        late = lambda *a, **k: {"source": "Computed", "start": "16:50", "est_duration_min": 30, "sunset": "17:10",
+                                "latest_safe_start": "16:10", "turnaround_by": "16:25", "checked_at": "t",
+                                "warning": "Starting at 16:50 is after the latest safe start of 16:10."}
+        with patch("backend.agents.compute_timing", late):
+            result = self.plan(text="2 km walk near Ypsilanti starting at 4:50 PM tomorrow")
+        self.assertIn("Low light", [c["title"] for c in result["conditions"]])
 
     def test_outside_coverage_marks_the_new_sections_unavailable(self):
         result = agents.make_plan("A hike in Antarctica tomorrow", 42.0, -83.0)

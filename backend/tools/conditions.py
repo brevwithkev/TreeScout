@@ -2,7 +2,11 @@
 
 from datetime import datetime, timedelta
 
-LOW_LIGHT_MIN = 45   # finishing within this many minutes of sunset is "low light"
+from backend.tools.timing import SAFETY_MARGIN
+
+# "Low light" uses the same 30 min buffer as the start-time move (timing.latest_safe_start = sunset - duration - 30),
+# so a plan whose start the planner just moved to the latest safe start is not flagged.
+LOW_LIGHT_MIN = int(SAFETY_MARGIN.total_seconds() // 60)
 FREEZING_F = 32
 
 
@@ -17,7 +21,11 @@ def derive_conditions(timing, hike_window):
         start = datetime.strptime(timing["start"], "%H:%M")
         finish = start + timedelta(minutes=int(timing["est_duration_min"]))
         margin = (datetime.strptime(timing["sunset"], "%H:%M") - finish).total_seconds() / 60
-        if margin < LOW_LIGHT_MIN:
+        safe = timing.get("latest_safe_start")
+        # Same test as the timing check (start after the latest safe start); the margin is only a fallback, because
+        # HH:MM rounding can make a start exactly at latest_safe_start look like 29 min before sunset.
+        late = timing["start"] > safe if safe else margin < LOW_LIGHT_MIN
+        if late:
             out.append({"title": "Low light",
                         "advice": f"You finish around {finish:%H:%M}, within {LOW_LIGHT_MIN} min of sunset "
                                   f"({timing['sunset']}); bring a headlamp",
