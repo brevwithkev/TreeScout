@@ -1,7 +1,8 @@
 """Live check that POST /plan never returns mock_plan.json placeholders.
 
 Needs a running server: python -m unittest discover -s tests -p "*_test.py"
-Set TREESCOUT_URL to test a server other than http://localhost:8000.
+Uses TREESCOUT_URL (default http://127.0.0.1:8011, the test server). Never point it at port 8000: that is the
+developer's own server (Gemini on).
 """
 
 import json
@@ -9,7 +10,7 @@ import os
 import unittest
 from urllib.request import Request, urlopen
 
-BASE = os.environ.get("TREESCOUT_URL", "http://localhost:8000").rstrip("/")
+BASE = os.environ.get("TREESCOUT_URL", "http://127.0.0.1:8011").rstrip("/")
 FORBIDDEN = ("Acorn Nature Trail", "River Bend Path", "Example Loop", "Found 14 named trails")
 REQUESTS = [
     {"request": "Easy 3 mile walk near Ypsilanti tomorrow morning"},
