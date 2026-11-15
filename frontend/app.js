@@ -819,9 +819,9 @@ function renderSources(plan) {
    Hike simulation, narration audio, late check, voice input
    ========================================================================== */
 
-// Backend contracts (Kenneth's backend/voice.py and backend/narration.py). Confirm the shapes with him:
-const TTS_URL = "/tts";           // POST {"text": "..."}                                  -> audio bytes (audio/*)
-const LATE_URL = "/narrate/late"; // POST {"plan": {...}, "km_hiked": n, "elapsed_min": n} -> {"late": bool, "text": "..."}
+// Backend contracts (backend/main.py TTSRequest / LateNarrationRequest, backend/narration.py):
+const TTS_URL = "/tts";           // POST {"text": "..." (1-1000 chars)}                     -> audio/mpeg; 502 if TTS fails
+const LATE_URL = "/narrate/late"; // POST {"plan": {...}, "current_km": n, "elapsed_min": n} -> {"late": false} | {"late": true, "text": "..."}
 // The whole hike plays in about this many real seconds at normal speed (?simSeconds=N to change it).
 const SIM_SECONDS = Math.max(1, Number(new URLSearchParams(location.search).get("simSeconds")) || 60);
 const LATE_CHECK_MS = 3000;
@@ -1167,7 +1167,7 @@ async function checkLate() {
   try {
     const response = await fetch(LATE_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: hike.plan, km_hiked: Math.round(hike.progress * hike.totalKm * 100) / 100,
+      body: JSON.stringify({ plan: hike.plan, current_km: Math.round(hike.progress * hike.totalKm * 100) / 100,
                              elapsed_min: Math.round(hike.elapsedMin * 10) / 10 }),
     });
     if (gen !== hike.gen) return;
