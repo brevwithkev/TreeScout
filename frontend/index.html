@@ -35,6 +35,13 @@
         <div class="panel-body">
           <section id="panel-plan" class="tab-panel" role="tabpanel" aria-labelledby="tab-plan">
             <form id="plan-form" class="plan-form" novalidate>
+              <div id="demo-plans-field" class="field" hidden>
+                <label for="demo-plans" class="label">Demo plans</label>
+                <select id="demo-plans">
+                  <option value="">Load a recorded plan…</option>
+                </select>
+              </div>
+
               <label for="request" class="label">Hike request</label>
               <div class="request-row">
                 <textarea id="request" name="request" rows="3" required

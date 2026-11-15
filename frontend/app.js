@@ -41,6 +41,8 @@ const els = {
   sourcesBody: $("#sources-body"),
   gibsLabel: $("#gibs-label"),
   mic: $("#mic-btn"),
+  demoField: $("#demo-plans-field"),
+  demoSelect: $("#demo-plans"),
   micStatus: $("#mic-status"),
   caption: $("#caption"),
   turnback: $("#turnback"),
@@ -466,7 +468,8 @@ function setLoading(on, mock) {
     els.results.replaceChildren(
       el("div", { class: "loading" },
         el("span", { class: "spinner", "aria-hidden": "true" }),
-        el("span", {}, mock ? "Loading mock plan…" : "Planning… finding trails can take up to a minute.")),
+        el("span", {}, mock === "demo" ? "Loading recorded plan…"
+                         : mock ? "Loading mock plan…" : "Planning… finding trails can take up to a minute.")),
     );
   }
 }
@@ -481,8 +484,13 @@ function showError(message) {
 function renderModeBadges(plan, mock) {
   const partial = ["trail", "timing", "weather", "climate", "space_weather", "checker"]
     .some((k) => isObj(plan[k]) && plan[k].available === false);
+  const recordedAt = str(plan.demo_recorded_at);
+  const recordedLocal = recordedAt && fmtLocal(recordedAt);
   fill(els.modeBadges,
-    el("span", { class: `badge ${mock ? "badge--mock" : "badge--live"}` }, mock ? "Mock data" : "Live"),
+    recordedLocal
+      ? el("span", { class: "badge badge--recorded", title: "Saved by demo mode; not live data" },
+           "Recorded data from ", el("time", { datetime: recordedAt }, recordedLocal))
+      : el("span", { class: `badge ${mock ? "badge--mock" : "badge--live"}` }, mock ? "Mock data" : "Live"),
     partial && el("span", { class: "badge badge--partial", title: "At least one data source returned available: false" }, "Partial data"),
   );
 }
@@ -1312,6 +1320,49 @@ function initHike() {
 }
 
 /* ==========================================================================
+   Demo plans (recordings saved by the backend's demo mode)
+   ========================================================================== */
+
+async function initDemoPlans() {
+  let items = [];
+  try {
+    const response = await fetch("/demo/plans");
+    if (response.ok) items = await response.json();
+  } catch { /* no demo endpoint: keep the dropdown hidden */ }
+  if (!Array.isArray(items) || !items.length) return;
+
+  for (const item of items) {
+    if (!isObj(item) || !str(item.slug)) continue;
+    const when = fmtLocal(item.recorded_at);
+    els.demoSelect.append(el("option", { value: item.slug },
+      `${str(item.request) || item.slug}${when ? ` · ${when}` : ""}`));
+  }
+  els.demoField.hidden = els.demoSelect.options.length <= 1;
+  els.demoSelect.addEventListener("change", () => {
+    const slug = els.demoSelect.value;
+    if (slug) loadDemoPlan(slug);
+  });
+}
+
+async function loadDemoPlan(slug) {
+  const seq = ++requestSeq;
+  setLoading(true, "demo");
+  try {
+    const response = await fetch(`/demo/plans/${encodeURIComponent(slug)}`);
+    if (!response.ok) throw new Error(`/demo/plans/${slug} returned ${response.status}`);
+    const plan = await response.json();
+    if (seq !== requestSeq) return;
+    if (!isObj(plan)) throw new Error("The recording is not a plan object.");
+    if (str(plan.request)) els.request.value = plan.request;
+    renderPlan(plan, false);
+  } catch (err) {
+    if (seq === requestSeq) showError(err.message);
+  } finally {
+    if (seq === requestSeq) setLoading(false);
+  }
+}
+
+/* ==========================================================================
    Start
    ========================================================================== */
 
@@ -1320,5 +1371,6 @@ initForm();
 initMap();
 initHike();
 initVoice();
+initDemoPlans();
 els.form.addEventListener("submit", onPlan);
 checkHealth();
