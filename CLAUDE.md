@@ -20,6 +20,7 @@ TreeScout is a hiking route planner: a FastAPI backend (Python 3.11+) plus a sta
   - `POST /tts` takes `{text}` (1-1000 chars) and returns `audio/mpeg`; it is the only path to ElevenLabs (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`, default `eleven_flash_v2_5`). Audio is cached in `cache/tts/`. 502 with `detail` if the key is missing or ElevenLabs fails.
   - `POST /narrate/late` takes `{plan, current_km, elapsed_min}` and returns `{"late": false}` or `{"late": true, "text": ...}`.
   - `/plan` fills `narration` via `generate_narration`: items `{coord_index, km, kind, text}` sorted by `coord_index` (kind: trailhead, km, halfway, hazard, finish).
+- Demo mode (`backend/demo.py`): `DEMO_RECORD=1` writes `demo_data/plans/` and `demo_data/tts/` (committed); `DEMO_MODE=1` replays them. Keep `DEMO_RECORD` off when testing so committed demos aren't overwritten.
 - `trail.coords` are `[lat, lon]` pairs, which is the order Leaflet expects. `narration[].coord_index` indexes into `trail.coords`.
 
 ## Frontend stack

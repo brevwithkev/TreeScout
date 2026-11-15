@@ -34,27 +34,32 @@ Keys in `.env` (all optional; anything missing falls back gracefully):
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Planner and safety-checker agents | Rule-based planner (`parsed_by: "rules"`) |
 | `NASA_API_KEY` | NASA DONKI space weather | Space weather shows "Unavailable" |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL` | Voice guide (`/tts`); model defaults to `eleven_flash_v2_5` | Captions without audio |
-| `DEMO_MODE` | Replay recorded plans (see below) | `0` (off) |
+| `DEMO_MODE`, `DEMO_RECORD` | Replay / record demo plans (see below) | `0` (off) |
 
 ### Demo mode
 
-Every successful `/plan` response is saved to `demo_data/plans/<slug>.json` (the request text lowercased, without punctuation, spaces as dashes), with a `demo_recorded_at` timestamp. These recordings are committed, so a demo works on any laptop.
+Two switches, both off by default:
 
-Turn it on with `DEMO_MODE=1` in `.env`, or for one session:
+- **`DEMO_RECORD=1`** saves every successful `/plan` to `demo_data/plans/<slug>.json` (the slug is the request text lowercased, without punctuation, spaces as dashes) with a `demo_recorded_at` timestamp. It also saves the plan's voice lines (narration, the "Turn back now." cue and the turn-back sentence) to `demo_data/tts/`. Leave it off for normal use and testing, so demos aren't overwritten.
+- **`DEMO_MODE=1`** replays recordings:
+  - `/plan` returns a recording that matches the request text instantly, and plans live only when none matches.
+  - `/tts` serves only saved audio (`demo_data/tts/`, then the local cache) and returns a clean 502 for anything else, so the page shows captions instead.
+  - Recorded plans show a **"Recorded data from <time>"** badge.
+
+`demo_data/` is committed, including the audio, which is named by its text alone. Demos therefore play with voice on any laptop, without an ElevenLabs key and whatever voice is configured there.
 
 ```powershell
-$env:DEMO_MODE = "1"
-uvicorn backend.main:app
+# record (live planning; needs your API keys)
+$env:DEMO_RECORD = "1"; uvicorn backend.main:app
+# ...plan each demo request once in the browser, then stop the server
+
+# present
+$env:DEMO_RECORD = "0"; $env:DEMO_MODE = "1"; uvicorn backend.main:app
 ```
 
-With demo mode on:
-- `/plan` returns a recording that matches the request text instantly, and plans live only when none matches.
-- `/tts` serves only audio that is already cached and returns a clean 502 for anything else, so the page shows captions instead.
-- Recorded plans show a **"Recorded data from <time>"** badge.
+To save voice audio for recordings that don't have it yet, run `python -m backend.demo audio`.
 
 The **Demo plans** dropdown (shown whenever recordings exist) loads one with a single click. `GET /demo/plans` lists them.
-
-Voice audio is cached in `cache/tts/`, which is not committed. On a fresh machine, play each demo once with demo mode off to cache its audio.
 
 ### Tests
 

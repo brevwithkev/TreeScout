@@ -25,6 +25,12 @@ DEFAULT_MODEL_ID = "eleven_flash_v2_5"      # ElevenLabs' lowest-latency TTS mod
 HAZARD_NARRATION_KM = 2.0
 LOOP_MAX_GAP_KM = 0.2
 LATE_BUFFER_MIN = 30           # must finish at least this long before sunset
+TURN_BACK_CUE = "Turn back now."  # same text as frontend/app.js TURN_BACK_CUE (played instantly on TURN BACK)
+
+
+def turn_back_text(sunset):
+    """The spoken TURN BACK line (same text as frontend/app.js isLateLocally)."""
+    return f"You're behind schedule. Turn back now to reach the trailhead before sunset at {sunset}."
 LATE_MIN_KM = 0.25             # too early to judge pace before this
 
 
@@ -159,9 +165,7 @@ def check_late_pace(plan, current_km, elapsed_min):
     remaining_km = max(0.0, total_km - current_km)
     finish_min = start_min + elapsed_min + remaining_km * pace
     if finish_min + LATE_BUFFER_MIN > sunset_min:
-        return {"late": True,
-                "text": f"You're behind schedule. Turn back now to reach the trailhead before sunset at "
-                        f"{timing['sunset']}."}
+        return {"late": True, "text": turn_back_text(timing["sunset"])}
     return {"late": False}
 
 

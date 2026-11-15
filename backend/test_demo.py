@@ -21,6 +21,8 @@ class DemoModeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.plans_dir = Path(self.tmp.name) / "plans"
         for p in (patch.object(demo, "PLANS_DIR", self.plans_dir),
+                  patch.object(demo, "TTS_DIR", Path(self.tmp.name) / "demo_tts"),
+                  patch.dict("os.environ", {"DEMO_RECORD": "1"}),
                   patch.object(narration, "TTS_CACHE_DIR", Path(self.tmp.name) / "tts"),
                   patch.object(narration, "urlopen", side_effect=AssertionError("no network in tests"))):
             p.start()
@@ -54,6 +56,57 @@ class DemoModeTests(unittest.TestCase):
                 self.assertEqual(demo.demo_mode(), expected)
         with patch.dict("os.environ", {}, clear=True):
             self.assertFalse(demo.demo_mode())  # default off
+
+    def test_nothing_is_recorded_unless_demo_record(self):
+        self.demo_env(False)
+        with patch.dict("os.environ", {"DEMO_RECORD": "0"}):
+            main.plan(main.PlanRequest(request="Not recorded"))
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(demo.demo_record())  # default off
+            main.plan(main.PlanRequest(request="Also not recorded"))
+        self.assertFalse(self.plans_dir.exists() and any(self.plans_dir.iterdir()))
+        self.assertEqual(self.live_calls, ["Not recorded", "Also not recorded"])
+
+    def test_recording_saves_voice_lines_to_demo_data(self):
+        self.demo_env(False)
+        plan = {"request": "Voice plan", "timing": {"sunset": "17:12"},
+                "narration": [{"coord_index": 0, "text": "Welcome."}, {"coord_index": 5, "text": "Halfway."}]}
+        spoken = []
+
+        def fake_tts(text):
+            spoken.append(text)
+            return f"mp3:{text}".encode()
+
+        with patch.object(main, "make_plan", lambda *a, **k: plan), patch.object(narration, "synthesize_tts", fake_tts):
+            main.plan(main.PlanRequest(request="Voice plan"))
+            expected = ["Welcome.", "Halfway.", "Turn back now.",
+                        "You're behind schedule. Turn back now to reach the trailhead before sunset at 17:12."]
+            self.assertEqual(sorted(spoken), sorted(expected))
+            for line in expected:
+                self.assertEqual(demo.demo_audio(line), f"mp3:{line}".encode())
+            main.plan(main.PlanRequest(request="Voice plan"))  # recording again: audio already there
+            self.assertEqual(len(spoken), 4)
+
+    def test_demo_tts_serves_saved_audio_whatever_the_voice(self):
+        demo.TTS_DIR.mkdir(parents=True)
+        demo.audio_path("Welcome.").write_bytes(b"ID3demo")
+        self.demo_env(True)
+        with patch.dict("os.environ", {"ELEVENLABS_VOICE_ID": "another-voice", "ELEVENLABS_MODEL": "another-model"}):
+            response = main.tts(main.TTSRequest(text="Welcome."))
+        self.assertEqual((response.body, response.media_type), (b"ID3demo", "audio/mpeg"))
+        self.demo_env(False)  # outside demo mode the saved demo audio is not used
+        with patch.dict("os.environ", {"ELEVENLABS_API_KEY": ""}), self.assertRaises(HTTPException):
+            main.tts(main.TTSRequest(text="Welcome."))
+
+    def test_backfill_command(self):
+        self.demo_env(False)
+        plan = {"request": "Backfill me", "timing": {"sunset": "17:12"}, "narration": [{"coord_index": 0, "text": "Hi."}]}
+        with patch.dict("os.environ", {"DEMO_RECORD": "1"}), patch.object(main, "make_plan", lambda *a, **k: plan),                 patch.object(narration, "synthesize_tts", side_effect=RuntimeError("no key")):
+            main.plan(main.PlanRequest(request="Backfill me"))  # recorded, but audio failed
+        self.assertIsNone(demo.demo_audio("Hi."))
+        with patch.object(narration, "synthesize_tts", lambda text: b"ID3" + text.encode()),                 patch("dotenv.load_dotenv"):
+            self.assertEqual(demo._main(["demo", "audio"]), 0)
+        self.assertEqual(demo.demo_audio("Hi."), b"ID3Hi.")
 
     def test_live_plan_is_recorded_with_timestamp_on_the_copy_only(self):
         self.demo_env(False)

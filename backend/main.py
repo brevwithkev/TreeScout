@@ -52,7 +52,7 @@ def plan(body: PlanRequest):
     """Planner + checker agents (or the rule-based fallback). Every field comes from live tools.
 
     DEMO_MODE=1: a saved recording whose slug matches the request text is returned instantly (form fields
-    are ignored then). Every successful live plan is also saved to demo_data/plans/<slug>.json.
+    are ignored then). DEMO_RECORD=1: successful live plans (and their voice lines) are saved to demo_data/.
     """
     if demo.demo_mode():
         recorded = demo.load_recording(demo.slugify(body.request))
@@ -60,7 +60,8 @@ def plan(body: PlanRequest):
             return recorded
     form = {"distance_km": body.distance_km, "date": body.date, "start": body.start, "prefs": body.prefs}
     result = make_plan(body.request, body.lat, body.lon, radius_km=body.radius_km, form=form)
-    demo.save_recording(result)
+    if demo.demo_record():
+        demo.save_recording(result)
     return result
 
 
@@ -98,7 +99,12 @@ def narrate_late(body: LateNarrationRequest):
 @app.post("/tts")
 def tts(body: TTSRequest) -> Response:
     """MP3 speech for text via ElevenLabs (cached on disk). 502 if the key is missing or ElevenLabs fails.
-    DEMO_MODE=1: cached audio only; uncached text gets a 502 (the frontend shows captions instead)."""
+    DEMO_MODE=1: saved demo audio (demo_data/tts/) or the local cache only; anything else gets a 502
+    (the frontend shows captions instead)."""
+    if demo.demo_mode():
+        saved = demo.demo_audio(body.text)
+        if saved is not None:
+            return Response(content=saved, media_type="audio/mpeg")
     try:
         audio = synthesize_tts(body.text, cache_only=demo.demo_mode())
     except ValueError as exc:
