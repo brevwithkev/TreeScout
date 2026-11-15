@@ -3,12 +3,14 @@
 TreeScout is a hiking route planner: a FastAPI backend (Python 3.11+) plus a static frontend served at `/`. See README.md for setup.
 
 ## Ownership
-- The user is the **frontend developer**. Only edit files in `frontend/` (`index.html`, `app.js`, `styles.css`, and any new frontend files).
-- **Never edit anything in `backend/`.** A teammate owns it and works on it with Codex. If a frontend task needs a backend change, describe the change and let the user pass it to the teammate.
+- The user owns `frontend/` and, by agreement with the teammate (Kenneth) on 2026-11-14, the **Phase 2 backend**: `backend/main.py` (`/plan`), `backend/agents.py`, `backend/tools/*` and their tests.
+- **Never create or edit `backend/narration.py` or `backend/voice.py`.** Kenneth owns those (with Codex). If they need a change, describe it so the user can pass it on.
+- Each task says which area it covers ("In frontend/ only", "In backend/ only"); stay inside it.
 
 ## API contract
 - `mock_plan.json` is the API contract between backend and frontend. **Never change its shape** (no adding, removing, renaming or retyping fields).
 - If the frontend needs a field that isn't in the contract, stop and tell the user so they can ask the teammate.
+- `POST /plan` must never read `mock_plan.json` or emit mock values; only `GET /mock_plan.json` serves it. A failed data source is `{"available": false, "source": ..., "error": ...}`, never a mock fallback.
 - Current endpoints:
   - `GET /health` returns `{"ok": true}`
   - `POST /plan` takes `{request: string, lat: number, lon: number, radius_km?: number (default 15)}` and returns an object shaped like `mock_plan.json`. It returns 404 when no trails are found and 502 when the upstream trail data fails; the error message is in `detail`.
