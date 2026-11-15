@@ -2,18 +2,18 @@
  "request": "4 miles with hills near Ypsilanti starting at 3:30 PM tomorrow",
  "constraints": {
   "distance_km": 6.4,
-  "date": "2026-11-15",
-  "start": "15:00",
+  "date": "2026-11-16",
+  "start": "15:20",
   "prefs": [
    "hilly"
   ],
-  "parsed_by": "rules"
+  "parsed_by": "gemini"
  },
  "trail": {
   "name": "Rolling Hills MTB Trail",
   "osm_id": 55124390,
   "distance_km": 6.786,
-  "elevation_gain_m": 121,
+  "elevation_gain_m": null,
   "coords": [
    [
     42.1771219,
@@ -3262,43 +3262,43 @@
    "name": "Yellow Trail (Central Loop)",
    "osm_id": 399341772,
    "distance_km": 3.481,
-   "score": 0.613
+   "score": 0.639
   },
   {
    "name": "Red Trail (East Loop)",
    "osm_id": 399341931,
    "distance_km": 2.45,
-   "score": 0.539
+   "score": 0.553
   }
  ],
- "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), ranked #1 of 27 trails nearby. Starting at 15:00, you should be back about 38 min before sunset (17:12).",
+ "explanation": "Rolling Hills MTB Trail is 6.8 km (4.2 mi), ranked #2 of 27 trails nearby. Starting at 15:20, you should be back about 30 min before sunset (17:11).",
  "timing": {
-  "start": "15:00",
-  "est_duration_min": 94,
-  "sunset": "17:12",
-  "latest_safe_start": "15:09",
-  "turnaround_by": "15:55"
+  "start": "15:20",
+  "est_duration_min": 81,
+  "sunset": "17:11",
+  "latest_safe_start": "15:20",
+  "turnaround_by": "16:01"
  },
  "weather": {
   "source": "NWS",
-  "summary": "Partly Sunny, 48F",
-  "precip_chance": 1
+  "summary": "Mostly Sunny, 52F",
+  "precip_chance": 0
  },
  "climate": {
   "source": "NASA POWER",
   "years": "2006-2025",
-  "avg_high_c": 8.3,
-  "avg_low_c": -0.3,
-  "avg_precip_mm": 2.1
+  "avg_high_c": 8.2,
+  "avg_low_c": -0.4,
+  "avg_precip_mm": 1.9
  },
  "space_weather": {
   "source": "NASA DONKI",
   "kp_max": null,
   "aurora_chance": "low",
-  "checked_at": "2026-11-15T04:56:52Z"
+  "checked_at": "2026-11-15T05:57:11Z"
  },
  "hazards": [],
- "hazards_checked_at": "2026-11-15T04:56:53Z",
+ "hazards_checked_at": "2026-11-15T05:30:44Z",
  "reports": [],
  "agent_trace": [
   {
@@ -3306,7 +3306,7 @@
    "step": "tool",
    "tool": "get_trails",
    "summary": "Found 27 named trails within 15 km",
-   "ms": 7
+   "ms": 36
   },
   {
    "agent": "planner",
@@ -3318,92 +3318,92 @@
   {
    "agent": "planner",
    "step": "tool",
-   "tool": "get_elevation_gain",
-   "summary": "Yellow Trail (Central Loop): 40 m elevation gain",
-   "ms": 0
+   "tool": "get_hazards",
+   "summary": "No active NASA EONET events within 100 km",
+   "ms": 93
   },
   {
    "agent": "planner",
    "step": "tool",
-   "tool": "get_elevation_gain",
-   "summary": "Red Trail (East Loop): 31 m elevation gain",
-   "ms": 0
+   "tool": "get_climate",
+   "summary": "NASA POWER 2006-2025: this week averages a high of 8.2 °C, low -0.4 °C, 1.9 mm precipitation/day",
+   "ms": 109
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_weather",
-   "summary": "NWS Sunday: Partly Sunny, 48F, 1% chance of precipitation",
-   "ms": 79
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "get_elevation_gain",
-   "summary": "Rolling Hills MTB Trail: 121 m elevation gain",
-   "ms": 100
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "rank_trails",
-   "summary": "Ranked 27 trails; top: Rolling Hills MTB Trail (6.8 km, score 0.63)",
-   "ms": 0
-  },
-  {
-   "agent": "planner",
-   "step": "tool",
-   "tool": "compute_timing",
-   "summary": "Rolling Hills MTB Trail: 15:30 start, about 94 min; sunset 17:12, latest safe start 15:09",
-   "ms": 0
+   "summary": "NWS Monday: Mostly Sunny, 52F, 0% chance of precipitation",
+   "ms": 284
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "get_space_weather",
    "summary": "NASA DONKI: 0 geomagnetic storms 2026-11-12 to 2026-11-16; aurora chance low",
-   "ms": 399
+   "ms": 813
   },
   {
    "agent": "planner",
    "step": "tool",
-   "tool": "get_climate",
-   "summary": "NASA POWER 2006-2025: this week averages a high of 8.3 °C, low -0.3 °C, 2.1 mm precipitation/day",
-   "ms": 679
+   "tool": "get_elevation_gain",
+   "summary": "Open-Meteo Elevation unavailable: HTTPError: HTTP Error 429: Too Many Requests",
+   "ms": 1796
   },
   {
    "agent": "planner",
    "step": "tool",
-   "tool": "get_hazards",
-   "summary": "No active NASA EONET events within 100 km",
-   "ms": 1358
+   "tool": "get_elevation_gain",
+   "summary": "Open-Meteo Elevation unavailable: HTTPError: HTTP Error 429: Too Many Requests",
+   "ms": 1797
   },
   {
    "agent": "planner",
-   "step": "fallback",
-   "summary": "LLM unavailable, used rule-based planner"
-  },
-  {
-   "agent": "checker",
-   "step": "reject",
-   "summary": "Starting at 15:30 is after the latest safe start of 15:09: you would finish around 17:03, with sunset at 17:12."
-  },
-  {
-   "agent": "planner",
-   "step": "decide",
-   "summary": "Moved the start from 15:30 to 15:00 so the hike ends 30 min before sunset"
+   "step": "tool",
+   "tool": "get_elevation_gain",
+   "summary": "Open-Meteo Elevation unavailable: HTTPError: HTTP Error 429: Too Many Requests",
+   "ms": 1716
   },
   {
    "agent": "planner",
    "step": "tool",
    "tool": "compute_timing",
-   "summary": "Rolling Hills MTB Trail: 15:00 start, about 94 min; sunset 17:12, latest safe start 15:09",
+   "summary": "Yellow Trail (Central Loop): 15:30 start, about 42 min; sunset 17:11, latest safe start 15:59",
+   "ms": 0
+  },
+  {
+   "agent": "planner",
+   "step": "decide",
+   "summary": "Gemini proposed Rolling Hills MTB Trail (osm_id 55124390)"
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "compute_timing",
+   "summary": "Rolling Hills MTB Trail: 15:30 start, about 81 min; sunset 17:11, latest safe start 15:20",
+   "ms": 0
+  },
+  {
+   "agent": "checker",
+   "step": "reject",
+   "summary": "Starting at 15:30 is after the latest safe start of 15:20: you would finish around 16:51, with sunset at 17:11."
+  },
+  {
+   "agent": "planner",
+   "step": "decide",
+   "summary": "Planner moved the start from 15:30 to 15:20 to finish before sunset"
+  },
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "compute_timing",
+   "summary": "Rolling Hills MTB Trail: 15:20 start, about 81 min; sunset 17:11, latest safe start 15:20",
    "ms": 0
   },
   {
    "agent": "checker",
    "step": "decide",
-   "summary": "Python checks approved: 15:00 start is no later than the 15:09 latest safe start; no NASA EONET events within 5 km; 1% chance of precipitation"
+   "summary": "Gemini and Python checks approved: 15:20 start is no later than the 15:20 latest safe start; no NASA EONET events within 5 km; 0% chance of precipitation"
   },
   {
    "agent": "planner",
@@ -3420,7 +3420,7 @@
    "coord_index": 0,
    "km": 0.0,
    "kind": "trailhead",
-   "text": "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:12; turn around by 15:55. Weather: Partly Sunny, 48F."
+   "text": "Welcome to Rolling Hills MTB Trail, 6.8 kilometers total. Sunset is at 17:11; turn around by 16:01. Weather: Mostly Sunny, 52F."
   },
   {
    "coord_index": 93,
@@ -3444,7 +3444,7 @@
    "coord_index": 440,
    "km": 3.39,
    "kind": "halfway",
-   "text": "Halfway. You're on schedule if it's before 15:55."
+   "text": "Halfway. You're on schedule if it's before 16:01."
   },
   {
    "coord_index": 498,
@@ -3472,8 +3472,8 @@
   }
  ],
  "warnings": [
-  "You asked to start at 15:30; moved to 15:00 so you finish at least 30 min before sunset (17:12)."
+  "You asked to start at 15:30; moved to 15:20 so you finish at least 30 min before sunset (17:11)."
  ],
  "flood_or_burn_layer": null,
- "demo_recorded_at": "2026-11-15T04:56:59Z"
+ "demo_recorded_at": "2026-11-15T05:57:18Z"
 }
