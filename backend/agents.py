@@ -45,11 +45,12 @@ MAX_ROUNDS = 2
 OUTSIDE = "Outside our coverage area (southeast Michigan)"
 COVERAGE = {"lat": (41.70, 43.40), "lon": (-84.70, -82.40)}  # southeast Michigan
 
-LLM_TIMEOUT_MS = 15_000  # the SDK also sends this as the server-side deadline
+LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it rejects anything under 10 s
+LLM_CALL_TIMEOUT_S = 6        # we stop waiting after this and fall back (fail fast on an overloaded model)
+OVERLOAD_CODES = (429, 503, 504)
 PLANNER_MAX_TURNS = 6
 PLANNER_BUDGET_S = 14     # after this the rule-based planner finishes the job
 CHECKER_SKIP_AFTER_S = 15  # skip the LLM checker (Python checks still run) to stay near 20 s
-CHECKER_TIMEOUT_MS = 10_000  # the Gemini API rejects deadlines under 10 s
 REVISE_WITH_LLM_BEFORE_S = 12  # later than this, checker feedback is handled by the rule-based reviser
 PREFETCH_WAIT_S = 3  # prefetched non-trail results the planner sees; slower ones are left to the planner
 
@@ -291,7 +292,7 @@ class LLMUnavailable(Exception):
     pass
 
 
-def _gemini(timeout_ms=LLM_TIMEOUT_MS):
+def _gemini():
     key, model = os.environ.get("GEMINI_API_KEY", "").strip(), os.environ.get("GEMINI_MODEL", "").strip()
     if not key or not model:
         raise LLMUnavailable("GEMINI_API_KEY or GEMINI_MODEL is not set")
@@ -300,7 +301,36 @@ def _gemini(timeout_ms=LLM_TIMEOUT_MS):
         from google.genai import types
     except ImportError as exc:
         raise LLMUnavailable(f"google-genai is not installed: {exc}") from exc
-    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=timeout_ms)), model, types
+    http = types.HttpOptions(timeout=LLM_HTTP_DEADLINE_MS, retry_options=types.HttpRetryOptions(attempts=1))
+    return genai.Client(api_key=key, http_options=http), model, types
+
+
+# Gemini calls run here so we can stop waiting after LLM_CALL_TIMEOUT_S; an abandoned call simply
+# finishes (or hits the 10 s server deadline) in the background and its result is ignored.
+_LLM_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="gemini")
+
+
+def _describe_llm_error(exc):
+    code = getattr(exc, "code", None)
+    if code in OVERLOAD_CODES:
+        return f"{code} {getattr(exc, 'status', '') or ''} (overloaded or rate limited)".replace("  ", " ")
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+def _llm_call(ctx, fn, what):
+    """Run one Gemini call with fail-fast rules: at most LLM_CALL_TIMEOUT_S, no retries, and after any
+    failure (429/503/504, timeout, other error) no further Gemini calls in this request."""
+    if ctx.llm_down:
+        raise LLMUnavailable(f"{what} skipped: Gemini already failed in this request ({ctx.llm_down})")
+    future = _LLM_POOL.submit(fn)
+    try:
+        return future.result(timeout=LLM_CALL_TIMEOUT_S)
+    except FuturesTimeout:
+        reason = f"no answer within {LLM_CALL_TIMEOUT_S} s"
+    except Exception as exc:  # noqa: BLE001 - google.genai ClientError/ServerError, network errors
+        reason = _describe_llm_error(exc)
+    ctx.llm_down = reason
+    raise LLMUnavailable(f"{what}: {reason}")
 
 
 def _thinking(types, model):
@@ -389,10 +419,7 @@ class Planner:
         for _ in range(PLANNER_MAX_TURNS):
             if self.ctx.elapsed() > PLANNER_BUDGET_S:
                 raise LLMUnavailable(f"planner over its {PLANNER_BUDGET_S} s budget")
-            try:
-                reply = self.chat.send_message(message)
-            except Exception as exc:  # noqa: BLE001 - 429, 5xx, timeouts, bad model name
-                raise LLMUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}") from exc
+            reply = _llm_call(self.ctx, lambda m=message: self.chat.send_message(m), "planner")
             calls = reply.function_calls or []
             if not calls:
                 return _json_from_text(reply.text)
@@ -404,18 +431,19 @@ class Planner:
 
 
 def llm_check(ctx, summary):
-    client, model, types = _gemini(CHECKER_TIMEOUT_MS)
+    client, model, types = _gemini()
     schema = {"type": "object", "properties": {"approved": {"type": "boolean"},
                                                "problems": {"type": "array", "items": {"type": "string"}}},
               "required": ["approved", "problems"]}
+    reply = _llm_call(ctx, lambda: client.models.generate_content(
+        model=model, contents=json.dumps(summary, default=str),
+        config=types.GenerateContentConfig(system_instruction=CHECKER_PROMPT, response_mime_type="application/json",
+                                           response_json_schema=schema, thinking_config=_thinking(types, model))),
+        "checker")
     try:
-        reply = client.models.generate_content(
-            model=model, contents=json.dumps(summary, default=str),
-            config=types.GenerateContentConfig(system_instruction=CHECKER_PROMPT, response_mime_type="application/json",
-                                               response_json_schema=schema, thinking_config=_thinking(types, model)))
         verdict = _json_from_text(reply.text)
-    except Exception as exc:  # noqa: BLE001
-        raise LLMUnavailable(f"{type(exc).__name__}: {str(exc)[:200]}") from exc
+    except (ValueError, TypeError) as exc:
+        raise LLMUnavailable(f"checker reply was not JSON: {exc}") from exc
     return bool(verdict.get("approved")), [str(p) for p in verdict.get("problems") or [] if str(p).strip()]
 
 
@@ -433,6 +461,7 @@ class PlanContext:
         self.tools = Tools(self.trace, pool)
         self.rules = parse_request(text, self.today)
         self.trails_by_id = {}
+        self.llm_down = None  # reason string once any Gemini call failed; no more Gemini calls after that
 
     def elapsed(self):
         return perf_counter() - self.started
@@ -640,7 +669,9 @@ def _plan(ctx):
             trace.add("checker", "reject", p)
 
         llm_ok, llm_problems, llm_checked = True, [], False
-        if parsed_by == "gemini" and ctx.elapsed() < CHECKER_SKIP_AFTER_S:
+        if parsed_by == "gemini" and ctx.llm_down:
+            trace.add("checker", "fallback", "Gemini failed earlier in this request; used Python safety checks only")
+        elif parsed_by == "gemini" and ctx.elapsed() < CHECKER_SKIP_AFTER_S:
             try:
                 llm_ok, llm_problems = llm_check(ctx, _checker_view(plan, constraints))
                 llm_checked = True
@@ -805,7 +836,7 @@ def _revise(ctx, planner, problems, plan, ranked, rejected, constraints):
     if planner is not None and ctx.elapsed() >= REVISE_WITH_LLM_BEFORE_S:
         ctx.trace.add("planner", "fallback", "Skipped Gemini revision to stay within the time budget; "
                                              "used the rule-based reviser")
-    elif planner is not None:
+    elif planner is not None and not ctx.llm_down:
         try:
             answer = planner.run(
                 "The safety checker rejected your plan:\n- " + "\n- ".join(problems) +
