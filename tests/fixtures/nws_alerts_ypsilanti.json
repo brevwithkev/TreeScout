@@ -1,0 +1,58 @@
+{
+ "@context": {"@version": "1.1"},
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.0a1b2c3d4e5f60718293a4b5c6d7e8f901234567.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.0a1b2c3d4e5f60718293a4b5c6d7e8f901234567.001.1",
+    "areaDesc": "Washtenaw; Wayne; Monroe",
+    "sent": "2026-11-16T03:12:00-05:00",
+    "effective": "2026-11-16T03:12:00-05:00",
+    "onset": "2026-11-16T07:00:00-05:00",
+    "expires": "2026-11-16T15:00:00-05:00",
+    "ends": "2026-11-16T19:00:00-05:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Winter Weather Advisory",
+    "senderName": "NWS Detroit/Pontiac MI",
+    "headline": "Winter Weather Advisory issued November 16 at 3:12AM EST until November 16 at 7:00PM EST by NWS Detroit/Pontiac MI",
+    "description": "* WHAT...Mixed precipitation. Total snow accumulations of 1 to 2 inches and ice accumulations of a light glaze.",
+    "instruction": "Slow down and use caution while traveling."
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f0e1d2c3b4a5968778695a4b3c2d1e0f98765432.002.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f0e1d2c3b4a5968778695a4b3c2d1e0f98765432.002.1",
+    "areaDesc": "Washtenaw",
+    "sent": "2026-11-16T04:40:00-05:00",
+    "effective": "2026-11-16T04:40:00-05:00",
+    "onset": null,
+    "expires": "2026-11-16T10:00:00-05:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Observed",
+    "urgency": "Expected",
+    "event": "Special Weather Statement",
+    "senderName": "NWS Detroit/Pontiac MI",
+    "headline": "Special Weather Statement issued November 16 at 4:40AM EST by NWS Detroit/Pontiac MI",
+    "description": "Patchy dense fog this morning.",
+    "instruction": null
+   }
+  }
+ ],
+ "title": "Current watches, warnings, and advisories for 42.2411 N, 83.613 W",
+ "updated": "2026-11-16T04:40:00+00:00"
+}
