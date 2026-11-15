@@ -25,6 +25,13 @@ MIN_COORDS = 10
 DISTANCE_TOLERANCE = 0.5
 KM_PER_MI = 1.609344
 FORBIDDEN = ("Acorn Nature Trail", "River Bend Path", "Example Loop", "Found 14 named trails")
+FAR_WARNING = "No trail near"
+# (words that must all appear in the prompt, regex a warning must match, description)
+EXPECTED_WARNINGS = [
+    (("4 miles", "3:30 pm"), r"sunset", "a sunset-related warning"),
+    (("10 miles", "2 pm"), rf"^{FAR_WARNING} ", f"a '{FAR_WARNING} ...' distance warning"),
+    (("antarctica",), r"coverage", "a coverage warning"),
+]
 SECTIONS_WITH_SOURCE = ("weather", "climate", "space_weather")
 
 
@@ -78,12 +85,14 @@ def check(prompt, plan, raw_text, seconds, contract_keys):
                 problems.append(f"alternatives has {count} items (need 2)")
             asked = asked_distance_km(prompt)
             got = trail.get("distance_km")
+            told_far = any(str(w).startswith(FAR_WARNING) for w in plan.get("warnings") or [])
             if asked is not None:
                 if not isinstance(got, (int, float)):
                     problems.append(f"trail.distance_km is {got!r}")
-                elif abs(got - asked) > DISTANCE_TOLERANCE * asked:
+                elif abs(got - asked) > DISTANCE_TOLERANCE * asked and not told_far:
                     problems.append(f"trail is {got:.1f} km; asked {asked:.1f} km "
-                                    f"(allowed {asked * (1 - DISTANCE_TOLERANCE):.1f}-{asked * (1 + DISTANCE_TOLERANCE):.1f})")
+                                    f"(allowed {asked * (1 - DISTANCE_TOLERANCE):.1f}-{asked * (1 + DISTANCE_TOLERANCE):.1f}) "
+                                    f"and there is no '{FAR_WARNING}' warning")
 
     for name in SECTIONS_WITH_SOURCE:
         if not has_source(plan.get(name)):
@@ -106,14 +115,11 @@ def check(prompt, plan, raw_text, seconds, contract_keys):
         problems.append(f"checker lacks approved/rounds: {checker!r}")
 
     warnings = [str(w) for w in plan.get("warnings") or []]
-    if "10 mile" in lowered and "2 pm" in lowered:
-        if not any(re.search(r"sunset|safe start|dark", w, re.IGNORECASE) for w in warnings):
-            problems.append(f"expected a sunset-related warning; warnings = {warnings}")
-    if "antarctica" in lowered:
-        if not any("coverage" in w.lower() for w in warnings):
-            problems.append(f"expected a coverage warning; warnings = {warnings}")
-        if plan.get("trail") is not None:
-            problems.append("expected trail to be null")
+    for words, pattern, description in EXPECTED_WARNINGS:
+        if all(word in lowered for word in words) and not any(re.search(pattern, w, re.IGNORECASE) for w in warnings):
+            problems.append(f"expected {description}; warnings = {warnings}")
+    if "antarctica" in lowered and plan.get("trail") is not None:
+        problems.append("expected trail to be null")
 
     if seconds >= MAX_SECONDS:
         problems.append(f"took {seconds:.1f} s (limit {MAX_SECONDS} s)")
