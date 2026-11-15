@@ -59,7 +59,7 @@ Voice audio is cached in `cache/tts/`, which is not committed. On a fresh machin
 ### Tests
 
 ```powershell
-python -m unittest backend.test_agents backend.test_narration backend.test_demo backend.tools.test_trails  # offline
+python -m unittest backend.test_agents backend.test_narration backend.test_demo backend.tools.test_trails backend.tools.test_data_cache  # offline
 python tests/test_tools.py                                  # live data tools, Ypsilanti, tomorrow
 python tests/golden.py --url http://localhost:8000          # golden prompts against a running server
 python -m unittest discover -s tests -p "*_test.py"         # smoke + no-mock-values checks (server running)
@@ -117,8 +117,8 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 
 | Dataset | Provider | What we use it for | Dates / place | Link |
 |---|---|---|---|---|
-| EONET v3 (open events) | NASA | Active natural hazards: map markers, Hazards tab, 5 km safety check | Events open at request time, within 100 km of the search area | https://eonet.gsfc.nasa.gov/ |
-| POWER daily point data (T2M_MAX, T2M_MIN, PRECTOTCORR) | NASA Langley | "Typical conditions this week": average high, low, precipitation | Same calendar week (±3 days) in each of the 20 years before the hike date, at the search-area point | https://power.larc.nasa.gov/ |
+| EONET v3 (open events) | NASA | Active natural hazards: map markers, Hazards tab, 5 km safety check | Events open at request time, within 100 km of the search area (cached 6 h per location) | https://eonet.gsfc.nasa.gov/ |
+| POWER daily point data (T2M_MAX, T2M_MIN, PRECTOTCORR) | NASA Langley | "Typical conditions this week": average high, low, precipitation | Same calendar week (±3 days) in each of the 20 years before the hike date, at the search-area point (cached 6 h per location and week) | https://power.larc.nasa.gov/ |
 | DONKI geomagnetic storms (GST) | NASA CCMC | Max Kp and aurora chance tonight | Last 3 days through tomorrow, global | https://kauai.ccmc.gsfc.nasa.gov/DONKI/ |
 | GIBS: MODIS Terra Corrected Reflectance, true color | NASA | Satellite base-map layer | Yesterday's imagery (local date), map view | https://nasa-gibs.github.io/gibs-api-docs/ |
 | Forecast API | NOAA National Weather Service | Daytime forecast and precipitation chance for the hike day | Hike date, search area | https://www.weather.gov/documentation/services-web-api |
@@ -133,6 +133,7 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 - **MODIS** imagery has 250 m pixels: good for clouds, snow and smoke, not trail detail.
 - **Naismith's rule** (5 km/h plus 1 h per 600 m of climb) is an estimate; real pace varies with terrain, weather and the hiker.
 - **Trail coverage is southeast Michigan.** Saved trail data covers the Ypsilanti area; elsewhere TreeScout depends on the public Overpass servers, which are often slow or unavailable (it gives up after 8 s).
+- NASA POWER and EONET requests give up after 8 s (the section shows "Unavailable"), and results are cached on disk for 6 h in `data/tool_cache/`, so a repeat plan can show hazards up to 6 h old (the Hazards tab shows when EONET was checked).
 - Gemini quota and latency vary; plans then come from the rule-based planner.
 - **TreeScout is a planning aid, not a safety guarantee.** Check local conditions, carry a light, and turn back early.
 
