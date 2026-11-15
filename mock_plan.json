@@ -26,7 +26,7 @@
   "hike_window": {"source": "NWS hourly", "window": "10:00-12:00", "max_precip_chance": 20, "min_temp_f": 31,
                   "max_temp_f": 38, "max_wind_mph": 10, "conditions": ["Cloudy", "Slight Chance Snow Showers"],
                   "summary": "During your hike: 20% rain, 31-38F, wind 10 mph", "checked_at": "2026-11-14T20:14:00Z"},
-  "seasonal": {"source": "TreeScout seasonal calendar", "checked_at": "2026-11-14T20:14:00Z",
+  "seasonal": {"source": "TrekChek seasonal calendar", "checked_at": "2026-11-14T20:14:00Z",
                "items": [{"title": "Firearm deer season",
                           "advice": "Wear blaze orange; hunters are common near state game areas",
                           "source": "Michigan DNR season dates",

@@ -1,4 +1,4 @@
-"""TreeScout application and static frontend."""
+"""TrekChek application and static frontend."""
 
 from pathlib import Path
 import logging
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 DEFAULT_LAT = 42.2411
 DEFAULT_LON = -83.6130
 
-app = FastAPI(title="TreeScout")
+app = FastAPI(title="TrekChek")
 
 
 @app.get("/health")

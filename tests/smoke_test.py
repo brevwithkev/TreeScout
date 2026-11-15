@@ -1,4 +1,4 @@
-"""Check a running TreeScout server using only the standard library."""
+"""Check a running TrekChek server using only the standard library."""
 
 import json
 import unittest
@@ -12,7 +12,7 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(json.load(response), {"ok": True})
 
     def test_frontend(self):
-        for path, expected in [("/", b"TreeScout"), ("/app.js", b"checkHealth"), ("/styles.css", b":root")]:
+        for path, expected in [("/", b"TrekChek"), ("/app.js", b"checkHealth"), ("/styles.css", b":root")]:
             with self.subTest(path=path):
                 with urlopen(f"http://localhost:8000{path}", timeout=5) as response:
                     self.assertEqual(response.status, 200)

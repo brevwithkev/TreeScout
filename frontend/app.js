@@ -1,4 +1,4 @@
-// TreeScout frontend: plan a hike, render every section of the plan, draw it on the map.
+// TrekChek frontend: plan a hike, render every section of the plan, draw it on the map.
 // Every field is treated as optional: a missing or `available: false` section shows "Unavailable".
 "use strict";
 
@@ -578,7 +578,7 @@ function timingCard(plan) {
     ["Turnaround by", str(t.turnaround_by), { highlight: true }],
   ]);
   const day = isObj(plan.constraints) ? fmtDay(plan.constraints.date) : null;
-  return card("Timing", { body, source: (t && str(t.source)) || "TreeScout planner", date: day && `for ${day}` });
+  return card("Timing", { body, source: (t && str(t.source)) || "TrekChek planner", date: day && `for ${day}` });
 }
 
 function weatherCard(plan) {
@@ -752,7 +752,7 @@ function checkerLine(checker) {
 function traceCard(plan) {
   const steps = Array.isArray(plan.agent_trace) ? plan.agent_trace.filter(isObj) : null;
   if (!steps || !steps.length) {
-    return card("How I planned this", { body: null, source: "TreeScout agents" });
+    return card("How I planned this", { body: null, source: "TrekChek agents" });
   }
   const list = el("ol", { class: "trace" });
   const checker = checkerLine(plan.checker);
@@ -779,7 +779,7 @@ function traceCard(plan) {
 
   const article = card("How I planned this", {
     body: el("div", {}, list, checker),
-    source: "TreeScout agents",
+    source: "TrekChek agents",
     date: `${steps.length} ${steps.length === 1 ? "step" : "steps"}`,
   });
   article.querySelector(".card-head").append(replayBtn);
@@ -880,7 +880,7 @@ function renderHazards(plan, origin) {
   const seasonalGroup = hazardGroup("Seasonal", "📅",
     groupProblem(seasonal, "Seasonal hazards")
       || (seasonalItems.length ? seasonalList() : el("p", { class: "state state--ok" }, "Nothing in season for this date and place")),
-    seasonal.state === "ok" && `Source: ${seasonal.source || "TreeScout seasonal calendar"}`);
+    seasonal.state === "ok" && `Source: ${seasonal.source || "TrekChek seasonal calendar"}`);
 
   const conditionItems = conditions.items || [];
   const conditionList = () => el("ul", { class: "hazard-list" }, conditionItems.map((c) =>
@@ -980,14 +980,14 @@ function renderSources(plan) {
   const day = isObj(plan.constraints) ? fmtDay(plan.constraints.date) : null;
   const rows = [
     row("Trail", "OpenStreetMap", !!validCoords(plan.trail), null),
-    row("Timing", (s("timing") && str(s("timing").source)) || "TreeScout planner", !!s("timing"), day),
+    row("Timing", (s("timing") && str(s("timing").source)) || "TrekChek planner", !!s("timing"), day),
     row("Weather", (s("weather") && str(s("weather").source)) || "NWS", !!s("weather"), (s("weather") && fmtLocal(s("weather").checked_at)) || day),
     row("Climate", (s("climate") && str(s("climate").source)) || "NASA POWER", !!s("climate"), s("climate") && str(s("climate").years)),
     row("Space weather", (s("space_weather") && str(s("space_weather").source)) || "NASA DONKI", !!s("space_weather"), s("space_weather") && fmtLocal(s("space_weather").checked_at)),
     row("Hazards", "NASA EONET", Array.isArray(plan.hazards), fmtLocal(plan.hazards_checked_at)),
     hRow("Weather alerts", "alerts", "NWS"),
     hRow("Hike-window forecast", "hike_window", "NWS hourly"),
-    hRow("Seasonal hazards", "seasonal", "TreeScout seasonal calendar"),
+    hRow("Seasonal hazards", "seasonal", "TrekChek seasonal calendar"),
     row("Satellite map", "NASA GIBS · MODIS Terra", true, gibsDay()),
   ];
   els.sourcesBody.replaceChildren(

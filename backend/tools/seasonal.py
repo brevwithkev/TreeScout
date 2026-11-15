@@ -2,7 +2,7 @@
 
 from backend.tools.common import now_iso, parse_date, unavailable
 
-SOURCE = "TreeScout seasonal calendar"
+SOURCE = "TrekChek seasonal calendar"
 
 # Each season: (month, day) start and end, inclusive, and the region it applies to.
 # THESE DATES MUST BE VERIFIED EVERY YEAR against the Michigan DNR hunting digest before the season;

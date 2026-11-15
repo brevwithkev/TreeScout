@@ -106,7 +106,7 @@ class TrailTests(unittest.TestCase):
             "get_nws_alerts": lambda lat, lon: {"source": "NWS", "items": [], "checked_at": "t"},
             "get_hike_window": lambda lat, lon, d, start, minutes: {"available": False, "source": "NWS hourly",
                                                                     "error": "boom", "checked_at": "t"},
-            "get_seasonal_hazards": lambda d, lat, lon: {"source": "TreeScout seasonal calendar", "items": [],
+            "get_seasonal_hazards": lambda d, lat, lon: {"source": "TrekChek seasonal calendar", "items": [],
                                                          "checked_at": "t"},
         }
         patches = [patch(f"backend.agents.{name}", fake) for name, fake in fakes.items()]

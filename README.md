@@ -148,10 +148,10 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 - **NASA POWER** values are ~0.5° grid averages, not trail-specific measurements.
 - **MODIS** imagery has 250 m pixels: good for clouds, snow and smoke, not trail detail.
 - **Naismith's rule** (5 km/h plus 1 h per 600 m of climb) is an estimate; real pace varies with terrain, weather and the hiker.
-- **Trail coverage is southeast Michigan.** Saved trail data covers the Ypsilanti area; elsewhere TreeScout depends on the public Overpass servers, which are often slow or unavailable (it gives up after 8 s).
+- **Trail coverage is southeast Michigan.** Saved trail data covers the Ypsilanti area; elsewhere TrekChek depends on the public Overpass servers, which are often slow or unavailable (it gives up after 8 s).
 - NASA POWER and EONET requests give up after 8 s (the section shows "Unavailable"), and results are cached on disk for 6 h in `data/tool_cache/`, so a repeat plan can show hazards up to 6 h old (the Hazards tab shows when EONET was checked).
 - Gemini quota and latency vary; plans then come from the rule-based planner.
-- **TreeScout is a planning aid, not a safety guarantee.** Check local conditions, carry a light, and turn back early.
+- **TrekChek is a planning aid, not a safety guarantee.** Check local conditions, carry a light, and turn back early.
 
 ## AI tools used
 
