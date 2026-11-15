@@ -1,0 +1,37 @@
+{
+ "27785500:a631e019089362c6": {
+  "elevation_gain_m": 33,
+  "points_sampled": 41,
+  "source": "Open-Elevation"
+ },
+ "283188549:08fdcb26661c708a": {
+  "elevation_gain_m": 10,
+  "points_sampled": 100,
+  "source": "Open-Elevation"
+ },
+ "33076120:ef2a3b8a5f4738e3": {
+  "elevation_gain_m": 16,
+  "points_sampled": 88,
+  "source": "Open-Elevation"
+ },
+ "341853665:a27201d4f596efbb": {
+  "elevation_gain_m": 8,
+  "points_sampled": 58,
+  "source": "Open-Elevation"
+ },
+ "376477067:a57e4d81079f1bed": {
+  "elevation_gain_m": 26,
+  "points_sampled": 80,
+  "source": "Open-Elevation"
+ },
+ "43226520:5a9483280252fb9b": {
+  "elevation_gain_m": 8,
+  "points_sampled": 69,
+  "source": "Open-Elevation"
+ },
+ "5115330:5a3660d92c578a5a": {
+  "elevation_gain_m": 32,
+  "points_sampled": 100,
+  "source": "Open-Elevation"
+ }
+}

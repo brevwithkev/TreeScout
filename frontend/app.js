@@ -550,7 +550,8 @@ function trailCard(plan, coords) {
   return card("Trail", {
     body,
     source: "OpenStreetMap",
-    date: [osm, t && t.cached === true ? "cached copy" : null].filter(Boolean).join(" · ") || null,
+    date: [osm, t && t.cached === true ? "cached copy" : null,
+           t && str(t.elevation_source) ? `elevation: ${str(t.elevation_source)}` : null].filter(Boolean).join(" · ") || null,
   });
 }
 

@@ -101,7 +101,8 @@ class TrailTests(unittest.TestCase):
             "get_hazards": lambda lat, lon, r: {"source": "NASA EONET", "items": [], "radius_km": r, "checked_at": "t"},
             "get_space_weather": lambda: {"source": "NASA DONKI", "kp_max": None, "storms": 0,
                                           "aurora_chance": "low", "window": "w", "checked_at": "t"},
-            "get_elevation_gain": lambda c: {"source": "Open-Meteo", "elevation_gain_m": 12, "checked_at": "t"},
+            "get_elevation_gain": lambda c, osm_id=None: {"source": "Open-Meteo", "elevation_gain_m": 12,
+                                                          "checked_at": "t"},
         }
         patches = [patch(f"backend.agents.{name}", fake) for name, fake in fakes.items()]
         patches.append(patch.dict("os.environ", {"GEMINI_API_KEY": ""}))
@@ -112,7 +113,9 @@ class TrailTests(unittest.TestCase):
         result = plan(PlanRequest(request="2 km walk near Ypsilanti tomorrow", lat=42, lon=-83))
         expected = json.loads((ROOT / "mock_plan.json").read_text(encoding="utf-8"))
         self.assertEqual(list(result), list(expected))
-        self.assertEqual(result["trail"].keys(), expected["trail"].keys())
+        # Contract trail keys plus the optional elevation_source (card label).
+        self.assertEqual(result["trail"].keys(), expected["trail"].keys() | {"elevation_source"})
+        self.assertEqual(result["trail"]["elevation_source"], "Open-Meteo")
         self.assertEqual(result["trail"]["name"], "Real trail")
         self.assertEqual(result["trail"]["elevation_gain_m"], 12)
         self.assertEqual(result["constraints"]["parsed_by"], "rules")

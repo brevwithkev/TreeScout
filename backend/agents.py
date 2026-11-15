@@ -479,7 +479,8 @@ class PlanContext:
         return result
 
     def elevation(self, trail):
-        return self.tools.submit("get_elevation_gain", get_elevation_gain, trail["coords"], label=trail["name"])
+        return self.tools.submit("get_elevation_gain", get_elevation_gain, trail["coords"], trail["osm_id"],
+                                 label=trail["name"])
 
     def timing(self, trail, gain, day, start):
         lat, lon = trail["coords"][0]
@@ -810,10 +811,12 @@ def _assemble(ctx, trail, constraints, area):
     hazards = ctx.tools.submit("get_hazards", get_hazards, round(area[0], 4), round(area[1], 4), HAZARD_RADIUS_KM)
     gain = gain_f.result()
     gain_m = None if _failed(gain) else gain["elevation_gain_m"]
+    gain_source = None if _failed(gain) else gain.get("source")
     timing = ctx.timing(trail, gain_m, constraints["date"], constraints["start"]).result()
     return {
         "trail": {"name": trail["name"], "osm_id": trail["osm_id"], "distance_km": trail["distance_km"],
-                  "elevation_gain_m": gain_m, "coords": trail["coords"]},
+                  "elevation_gain_m": gain_m, "coords": trail["coords"],
+                  "elevation_source": gain_source},  # extra field (not in mock_plan.json): card label
         "score": trail.get("score", 0.0), "constraints": dict(constraints),
         "timing": timing, "weather": weather.result(), "climate": climate.result(), "hazards": hazards.result(),
     }

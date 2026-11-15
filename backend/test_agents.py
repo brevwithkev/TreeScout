@@ -20,7 +20,7 @@ FAKE_TOOLS = {
     "get_hazards": lambda lat, lon, r: {"source": "NASA EONET", "items": [], "radius_km": r, "checked_at": "t"},
     "get_space_weather": lambda: {"source": "NASA DONKI", "kp_max": None, "storms": 0, "aurora_chance": "low",
                                   "window": "w", "checked_at": "t"},
-    "get_elevation_gain": lambda c: {"source": "Open-Meteo", "elevation_gain_m": 12, "checked_at": "t"},
+    "get_elevation_gain": lambda c, osm_id=None: {"source": "Open-Meteo", "elevation_gain_m": 12, "checked_at": "t"},
 }
 
 
