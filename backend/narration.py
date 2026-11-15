@@ -27,6 +27,11 @@ HAZARD_NARRATION_KM = 2.0
 LOOP_MAX_GAP_KM = 0.2
 LATE_BUFFER_MIN = 30           # must finish at least this long before sunset
 TURN_BACK_CUE = "Turn back now."  # same text as frontend/app.js TURN_BACK_CUE (played instantly on TURN BACK)
+BACK_ON_SCHEDULE_CUE = "You're back on schedule."      # frontend/app.js BACK_ON_SCHEDULE_CUE
+HEADING_BACK_CUE = "Heading back to the trailhead."    # frontend/app.js HEADING_BACK_CUE
+FIXED_CUES = (TURN_BACK_CUE, BACK_ON_SCHEDULE_CUE, HEADING_BACK_CUE)
+LATE_ROUNDING_MIN = 0.5        # times are whole minutes (HH:MM, est_duration_min): a plan that finishes exactly
+                               # 30 min before sunset must not flicker "late" from rounding
 
 
 def turn_back_text(sunset):
@@ -186,11 +191,14 @@ def _hhmm_to_min(value):
         return None
 
 
-def check_late_pace(plan, current_km, elapsed_min):
+def check_late_pace(plan, current_km, elapsed_min, current_pace_min_per_km=None):
     """{"late": true, "text": ...} only when finishing at the current pace, plus a 30 min buffer, would end
-    after sunset:  (start + elapsed) + remaining_km * (elapsed / current_km) + 30 > sunset.
-    Otherwise {"late": false}, including when start or sunset is missing and before LATE_MIN_KM.
-    The frontend's fallback (frontend/app.js isLateLocally) uses the same rule."""
+    after sunset:  now + remaining_km * pace + 30 > sunset (+ LATE_ROUNDING_MIN), where now = start + elapsed.
+
+    pace is current_pace_min_per_km when given (the pace the hiker is walking right now, so speeding up
+    shows at once); otherwise the average so far, elapsed / current_km, which needs LATE_MIN_KM of walking.
+    {"late": false} when start or sunset is missing. The frontend's fallback (frontend/app.js
+    isLateLocally) uses the same rule."""
     trail = plan.get("trail") if isinstance(plan.get("trail"), dict) else {}
     timing = _section(plan, "timing")
     start_min, sunset_min = _hhmm_to_min(timing.get("start")), _hhmm_to_min(timing.get("sunset"))
@@ -199,15 +207,21 @@ def check_late_pace(plan, current_km, elapsed_min):
     try:
         total_km = float(trail.get("distance_km") or 0.0)
         current_km, elapsed_min = float(current_km), float(elapsed_min)
+        given = float(current_pace_min_per_km) if current_pace_min_per_km is not None else None
     except (TypeError, ValueError):
         return {"late": False}
-    if total_km <= 0 or elapsed_min <= 0 or current_km < LATE_MIN_KM:
-        return {"late": False}  # too early: pace over a few metres is meaningless
+    if total_km <= 0 or elapsed_min < 0 or current_km < 0:
+        return {"late": False}
+    if given is not None and given > 0 and given != float("inf"):
+        pace = given                                     # minutes per km right now
+    elif elapsed_min > 0 and current_km >= LATE_MIN_KM:
+        pace = elapsed_min / current_km                  # average minutes per km so far
+    else:
+        return {"late": False}  # too early: an average over a few metres is meaningless
 
-    pace = elapsed_min / current_km                      # current minutes per km
     remaining_km = max(0.0, total_km - current_km)
     finish_min = start_min + elapsed_min + remaining_km * pace
-    if finish_min + LATE_BUFFER_MIN > sunset_min:
+    if finish_min + LATE_BUFFER_MIN > sunset_min + LATE_ROUNDING_MIN:
         return {"late": True, "text": turn_back_text(timing["sunset"])}
     return {"late": False}
 

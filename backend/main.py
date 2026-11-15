@@ -86,6 +86,8 @@ class LateNarrationRequest(BaseModel):
     plan: dict
     current_km: float = Field(ge=0, allow_inf_nan=False)
     elapsed_min: float = Field(ge=0, allow_inf_nan=False)
+    # Optional: the pace the hiker is walking right now (min/km). Without it the average so far is used.
+    current_pace_min_per_km: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class TTSRequest(BaseModel):
@@ -95,7 +97,7 @@ class TTSRequest(BaseModel):
 @app.post("/narrate/late")
 def narrate_late(body: LateNarrationRequest):
     """{"late": true, "text": ...} when the hiker should turn back; otherwise {"late": false}."""
-    return check_late_pace(body.plan, body.current_km, body.elapsed_min)
+    return check_late_pace(body.plan, body.current_km, body.elapsed_min, body.current_pace_min_per_km)
 
 
 @app.post("/tts")

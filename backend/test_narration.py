@@ -168,8 +168,37 @@ class LatePaceTests(unittest.TestCase):
         unavailable = {"available": False, "source": "x", "error": "down"}
         self.assertEqual(narration.check_late_pace(fake_plan(timing=unavailable), 1.0, 30), {"late": False})
 
+    def test_current_pace_replaces_the_average(self):
+        # 3:20 start, sunset 17:12, 94 min planned (13.8 min/km). 1 km in after 27.6 min (slowed): the average
+        # projects 1 km late, but walking at 1.3x now (10.6 min/km) finishes 15:47.6 + 61.5 = 16:49 -> +30 = 17:19.
+        plan = rolling_hills("15:20")
+        self.assertTrue(narration.check_late_pace(plan, 1.0, SLOWED_PACE)["late"])                    # average
+        self.assertTrue(narration.check_late_pace(plan, 1.0, SLOWED_PACE, 94 / 6.8 / 1.3)["late"])
+        early = rolling_hills("14:30")
+        self.assertTrue(narration.check_late_pace(early, 1.0, SLOWED_PACE)["late"])                   # average: late
+        self.assertEqual(narration.check_late_pace(early, 1.0, SLOWED_PACE, 94 / 6.8 / 1.3), {"late": False})
+        self.assertTrue(narration.check_late_pace(early, 1.0, SLOWED_PACE, SLOWED_PACE)["late"])      # still slow
+
+    def test_current_pace_judges_from_the_first_metre(self):
+        plan = rolling_hills("16:00")  # 16:00 + 94 + 30 > 17:12
+        self.assertTrue(narration.check_late_pace(plan, 0.0, 0.0, 94 / 6.8)["late"])
+        self.assertEqual(narration.check_late_pace(plan, 0.0, 0.0), {"late": False})  # average: too early
+
+    def test_finishing_exactly_on_the_buffer_does_not_flicker(self):
+        # Zero-slack plan (start = latest safe start): on pace with rounding noise is not late; 1 min more is.
+        plan = rolling_hills("15:08")   # 15:08 + 94 = 16:42; +30 = 17:12 = sunset
+        self.assertEqual(narration.check_late_pace(plan, 2.0, 2 * 94 / 6.8 + 0.1, 94 / 6.8), {"late": False})
+        self.assertTrue(narration.check_late_pace(plan, 2.0, 2 * 94 / 6.8 + 1.0, 94 / 6.8)["late"])
+
     def test_too_early_to_judge(self):
         self.assertEqual(narration.check_late_pace(rolling_hills("15:00"), 0.1, 10), {"late": False})
+
+    def test_endpoint_accepts_current_pace(self):
+        body = main.LateNarrationRequest(plan=rolling_hills("14:30"), current_km=1.0, elapsed_min=SLOWED_PACE,
+                                         current_pace_min_per_km=94 / 6.8 / 1.3)
+        self.assertEqual(main.narrate_late(body), {"late": False})
+        with self.assertRaises(Exception):
+            main.LateNarrationRequest(plan={}, current_km=1, elapsed_min=1, current_pace_min_per_km=0)
 
     def test_endpoint(self):
         body = main.LateNarrationRequest(plan=rolling_hills("15:00"), current_km=1.0, elapsed_min=SLOWED_PACE)
