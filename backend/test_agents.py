@@ -450,6 +450,22 @@ class HazardCheckerTests(unittest.TestCase):
                                                      "error": "NASA POWER normals unavailable (timed out)"})
         self.assertTrue(result["checker"]["approved"])
 
+    def test_stale_alerts_and_hike_window_say_so(self):
+        cached = {"source": "NWS", "items": [MODERATE], "checked_at": "2026-11-15T10:00:00Z", "stale": True}
+        result = self.plan(alerts=[MODERATE], window={"stale": True, "checked_at": "2026-11-15T09:00:00Z"})
+        fresh_alerts = result["alerts"]
+        with patch("backend.agents.get_nws_alerts", lambda lat, lon: cached):  # plan()'s other fakes stay on
+            result = agents.make_plan("2 km walk near Ypsilanti starting at 10 AM tomorrow", 42.0, -83.0)
+        self.assertNotIn("stale", fresh_alerts)
+        self.assertEqual(result["alerts"], cached)
+        self.assertIs(result["hike_window"]["stale"], True)
+        self.assertEqual(result["hike_window"]["checked_at"], "2026-11-15T09:00:00Z")
+        trace = [e["summary"] for e in result["agent_trace"]]
+        self.assertTrue(any(s.startswith("NWS: 1 active alert") and "cached from 2026-11-15T10:00:00Z" in s
+                            for s in trace), trace)
+        self.assertTrue(any(s.startswith("NWS hourly") and "cached from 2026-11-15T09:00:00Z" in s for s in trace))
+        self.assertIn("NWS Winter Weather Advisory (Moderate): Winter Weather Advisory until 7PM", result["warnings"])
+
     def test_severe_alert_rejects(self):
         result = self.plan(alerts=[SEVERE])
         self.assertFalse(result["checker"]["approved"])

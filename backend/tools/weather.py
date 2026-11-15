@@ -3,9 +3,14 @@ the hourly forecast for the hours of the hike."""
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import logging
 import re
 
-from backend.tools.common import cache_get, cache_put, get_json, get_json_within, now_iso, parse_date, unavailable
+from backend.tools import common
+from backend.tools.common import (cache_get, cache_put, get_json, get_json_within, now_iso, parse_date, retry_once,
+                                  unavailable)
+
+logger = logging.getLogger("treescout.tools")
 
 SOURCE = "NWS"
 HOURLY_SOURCE = "NWS hourly"
@@ -70,16 +75,37 @@ def _wind_mph(text):
     return max(numbers) if numbers else None
 
 
+def _cached_hourly(key, max_age_s):
+    cached = cache_get("nws_hourly", key, max_age_s)
+    return cached if isinstance(cached, dict) and isinstance(cached.get("periods"), list) else None  # skips old lists
+
+
 def hourly_periods(lat, lon):
-    """The NWS hourly forecast periods for a location (about 6.5 days), cached for 10 min."""
+    """{periods, checked_at[, stale]}: the NWS hourly forecast for a location (about 6.5 days), cached 10 min.
+
+    A 5xx or timeout (on /points or the hourly forecast) is retried once after 1 s. If it still fails, the last
+    successful forecast for the location (up to 6 h old) comes back with stale: true and its original checked_at.
+    Raises only when there is no such cached forecast.
+    """
     key = {"lat": round(float(lat), 2), "lon": round(float(lon), 2)}
-    cached = cache_get("nws_hourly", key, CACHE_SECONDS)
+    cached = _cached_hourly(key, CACHE_SECONDS)
     if cached is not None:
         return cached
-    url = _points(lat, lon)["forecastHourly"]
-    periods = get_json_within(HOURLY_TIMEOUT, url, headers=HEADERS)["properties"]["periods"]
-    cache_put("nws_hourly", key, periods)
-    return periods
+
+    def fetch():
+        url = _points(lat, lon)["forecastHourly"]
+        return get_json_within(HOURLY_TIMEOUT, url, headers=HEADERS)["properties"]["periods"]
+    try:
+        result = {"periods": retry_once(fetch, "NWS hourly"), "checked_at": now_iso()}
+    except Exception as exc:  # noqa: BLE001 - fall back to the last good forecast, else re-raise
+        stale = _cached_hourly(key, common.STALE_MAX_S)
+        if stale is None:
+            raise
+        logger.warning("NWS hourly failed (%s: %s); using the cached forecast from %s", type(exc).__name__, exc,
+                       stale.get("checked_at"))
+        return {**stale, "stale": True}
+    cache_put("nws_hourly", key, result)
+    return result
 
 
 def hike_window(periods, date, start, est_duration_min):
@@ -120,10 +146,13 @@ def get_hike_window(lat, lon, date, start, est_duration_min):
     """Return {source: "NWS hourly", window, max_precip_chance, min_temp_f, max_temp_f, max_wind_mph,
     conditions: [unique shortForecast], summary, checked_at} for the hours of the hike, or an unavailable dict."""
     try:
-        summary = hike_window(hourly_periods(lat, lon), date, start, est_duration_min)
+        hourly = hourly_periods(lat, lon)
+        summary = hike_window(hourly["periods"], date, start, est_duration_min)
         if summary is None:
             return unavailable(HOURLY_SOURCE, f"No NWS hourly forecast for {date} {start} "
                                               "(the hourly forecast covers about 6 days)")
+        if hourly.get("stale"):  # live check failed: the last good forecast, with its own checked_at
+            return {"source": HOURLY_SOURCE, **summary, "checked_at": hourly["checked_at"], "stale": True}
         return {"source": HOURLY_SOURCE, **summary, "checked_at": now_iso()}
     except Exception as exc:  # noqa: BLE001 - a tool must never raise
         return unavailable(HOURLY_SOURCE, f"{type(exc).__name__}: {exc}")

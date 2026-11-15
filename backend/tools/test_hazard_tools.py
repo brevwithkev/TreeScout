@@ -3,10 +3,13 @@ python -m unittest backend.tools.test_hazard_tools"""
 
 import copy
 import json
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from backend.tools import alerts, anomaly, common, conditions, seasonal, weather
 
@@ -28,19 +31,31 @@ class Fetch:
         self.urls.append(url)
         for prefix, payload in self.routes.items():
             if url.startswith(prefix):
+                if isinstance(payload, list):  # answers in order, the last one repeats
+                    payload = payload.pop(0) if len(payload) > 1 else payload[0]
                 if isinstance(payload, Exception):
                     raise payload
                 return copy.deepcopy(payload)
         raise AssertionError(f"unexpected URL {url}")
 
 
+def http_500(url="https://api.weather.gov/x"):
+    return HTTPError(url, 500, "Internal Server Error", None, None)
+
+
 class TempCache(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        p = patch.object(common, "CACHE_DIR", Path(tmp.name))
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (patch.object(common, "CACHE_DIR", Path(tmp.name)), patch.object(common, "RETRY_DELAY_S", 0)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def age_cache(self, kind, hours):
+        """Make every cached file of this kind look `hours` old."""
+        old = time.time() - hours * 3600
+        for path in (common.CACHE_DIR / kind).glob("*.json"):
+            os.utime(path, (old, old))
 
 
 class AlertsTests(TempCache):
@@ -74,7 +89,49 @@ class AlertsTests(TempCache):
             alerts.get_nws_alerts(*YPSI)
         self.assertEqual((result["available"], result["source"]), (False, "NWS"))
         self.assertIn("TimeoutError", result["error"])
+        self.assertEqual(len(fetch.urls), 4)  # each call: the request and one retry
+
+    def test_a_500_is_retried_once(self):
+        fetch = Fetch({alerts.URL: [http_500(), ALERTS]})
+        with patch.object(alerts, "get_json_within", fetch):
+            result = alerts.get_nws_alerts(*YPSI)
         self.assertEqual(len(fetch.urls), 2)
+        self.assertEqual(len(result["items"]), 2)
+        self.assertNotIn("stale", result)
+
+    def test_retry_waits_one_second(self):
+        self.assertEqual(alerts.common.RETRY_DELAY_S, 0)  # patched here; the real value:
+        with patch.object(common, "RETRY_DELAY_S", 1.0), patch.object(common.time, "sleep") as sleep:
+            with patch.object(alerts, "get_json_within", Fetch({alerts.URL: [http_500(), ALERTS]})):
+                alerts.get_nws_alerts(*YPSI)
+        sleep.assert_called_once_with(1.0)
+
+    def test_two_500s_fall_back_to_the_cached_result(self):
+        with patch.object(alerts, "get_json_within", Fetch({alerts.URL: ALERTS})):
+            first = alerts.get_nws_alerts(*YPSI)
+        self.age_cache("nws_alerts", 2)  # 2 h old: past the 10 min cache, within the 6 h fallback
+        fetch = Fetch({alerts.URL: http_500()})
+        with patch.object(alerts, "get_json_within", fetch):
+            result = alerts.get_nws_alerts(*YPSI)
+        self.assertEqual(len(fetch.urls), 2)
+        self.assertIs(result["stale"], True)
+        self.assertEqual(result["checked_at"], first["checked_at"])
+        self.assertEqual(result["items"], first["items"])
+
+    def test_no_fallback_older_than_six_hours(self):
+        with patch.object(alerts, "get_json_within", Fetch({alerts.URL: ALERTS})):
+            alerts.get_nws_alerts(*YPSI)
+        self.age_cache("nws_alerts", 7)
+        with patch.object(alerts, "get_json_within", Fetch({alerts.URL: http_500()})):
+            result = alerts.get_nws_alerts(*YPSI)
+        self.assertIs(result["available"], False)
+        self.assertIn("HTTP Error 500", result["error"])
+
+    def test_a_404_is_not_retried(self):
+        fetch = Fetch({alerts.URL: HTTPError(alerts.URL, 404, "Not Found", None, None)})
+        with patch.object(alerts, "get_json_within", fetch):
+            result = alerts.get_nws_alerts(*YPSI)
+        self.assertEqual((len(fetch.urls), result["available"]), (1, False))
 
 
 class HikeWindowTests(TempCache):
@@ -110,6 +167,49 @@ class HikeWindowTests(TempCache):
         result, _ = self.window(date="2026-11-25")
         self.assertIs(result["available"], False)
         self.assertEqual(result["source"], "NWS hourly")
+
+    def fetch_hourly(self, hourly):
+        return Fetch({"https://api.weather.gov/points/": POINTS, POINTS["properties"]["forecastHourly"]: hourly})
+
+    def test_a_500_on_the_hourly_forecast_is_retried_once(self):
+        result, fetch = self.window([http_500(), HOURLY])
+        self.assertEqual(result["summary"], "During your hike: 0% rain, 42-46F, wind 5 mph")
+        self.assertNotIn("stale", result)
+        self.assertEqual(len(fetch.urls), 3)  # /points, hourly 500, hourly retry
+
+    def test_two_500s_fall_back_to_the_cached_forecast(self):
+        first, _ = self.window()
+        self.age_cache("nws_hourly", 3)
+        self.age_cache("nws_points", 3)
+        fetch = self.fetch_hourly(http_500())
+        with patch.object(weather, "get_json_within", fetch):
+            result = weather.get_hike_window(*YPSI, "2026-11-16", "10:00", 90)
+        self.assertIs(result["stale"], True)
+        self.assertEqual(result["checked_at"], first["checked_at"])
+        self.assertEqual(result["summary"], first["summary"])
+        self.assertEqual(len(fetch.urls), 3)  # /points (then cached), hourly 500, hourly retry 500
+
+    def test_a_points_timeout_also_falls_back(self):
+        self.window()
+        self.age_cache("nws_hourly", 1)
+        self.age_cache("nws_points", 1)
+        fetch = Fetch({"https://api.weather.gov/points/": TimeoutError("no answer within 8 s")})
+        with patch.object(weather, "get_json_within", fetch):
+            result = weather.get_hike_window(*YPSI, "2026-11-16", "10:00", 90)
+        self.assertIs(result["stale"], True)
+        self.assertEqual(len(fetch.urls), 2)
+
+    def test_hourly_unavailable_without_a_cached_forecast(self):
+        result, fetch = self.window(http_500())
+        self.assertIs(result["available"], False)
+        self.assertIn("HTTP Error 500", result["error"])
+        self.assertEqual(len(fetch.urls), 3)
+
+    def test_hourly_unavailable_when_the_cache_is_over_six_hours_old(self):
+        self.window()
+        self.age_cache("nws_hourly", 6.5)
+        result, _ = self.window(http_500())
+        self.assertIs(result["available"], False)
 
     def test_hourly_and_points_are_cached(self):
         _, fetch = self.window()

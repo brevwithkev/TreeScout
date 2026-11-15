@@ -7,7 +7,9 @@ from tempfile import NamedTemporaryFile
 import hashlib
 import json
 import logging
+import socket
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -51,6 +53,30 @@ def get_json_within(seconds, url, params=None, headers=None):
 
 
 _DEADLINE_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tool-http")
+
+RETRY_DELAY_S = 1.0          # wait before the single retry of a transient failure
+STALE_MAX_S = 6 * 3600       # a failed live check may fall back to a cached success up to this old
+
+
+def transient(exc):
+    """True for errors worth one retry: HTTP 5xx and timeouts."""
+    if isinstance(exc, HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    return isinstance(exc, URLError) and isinstance(exc.reason, (TimeoutError, socket.timeout))
+
+
+def retry_once(fn, label):
+    """fn(); on a transient error (5xx, timeout) wait RETRY_DELAY_S and call it once more. Other errors raise."""
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001 - re-raised unless transient
+        if not transient(exc):
+            raise
+        logger.warning("%s: %s: %s; retrying once in %g s", label, type(exc).__name__, exc, RETRY_DELAY_S)
+        time.sleep(RETRY_DELAY_S)
+        return fn()
 
 
 # ---------------------------------------------------------------------------------------------

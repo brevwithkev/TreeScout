@@ -1,6 +1,11 @@
 """Active NWS watches, warnings and advisories for a point (api.weather.gov/alerts/active)."""
 
-from backend.tools.common import cache_get, cache_put, get_json_within, now_iso, unavailable
+import logging
+
+from backend.tools import common
+from backend.tools.common import cache_get, cache_put, get_json_within, now_iso, retry_once, unavailable
+
+logger = logging.getLogger("treescout.tools")
 
 SOURCE = "NWS"
 URL = "https://api.weather.gov/alerts/active"
@@ -28,17 +33,30 @@ def parse_alerts(data):
 
 
 def get_nws_alerts(lat, lon):
-    """Return {source: "NWS", items: [...], checked_at} or an unavailable dict. Cached on disk for 10 min."""
+    """Return {source: "NWS", items: [...], checked_at} or an unavailable dict. Cached on disk for 10 min.
+
+    A 5xx or timeout is retried once after 1 s. If the live check still fails, the last successful result for the
+    point (up to 6 h old) is returned with "stale": true and its original checked_at; unavailable only without one.
+    """
     try:
         lat, lon = float(lat), float(lon)
         key = {"lat": round(lat, 2), "lon": round(lon, 2)}
-        cached = cache_get("nws_alerts", key, CACHE_SECONDS)
-        if cached is not None:
-            return cached
-        # The point is put in the URL as-is: NWS wants a literal comma, not %2C.
-        data = get_json_within(TIMEOUT, f"{URL}?point={lat:.4f},{lon:.4f}", headers={"Accept": "application/geo+json"})
-        result = {"source": SOURCE, "items": parse_alerts(data), "checked_at": now_iso()}
-        cache_put("nws_alerts", key, result)
-        return result
-    except Exception as exc:  # noqa: BLE001 - a tool must never raise
+    except (TypeError, ValueError) as exc:
         return unavailable(SOURCE, f"{type(exc).__name__}: {exc}")
+    cached = cache_get("nws_alerts", key, CACHE_SECONDS)
+    if cached is not None:
+        return cached
+    try:
+        # The point is put in the URL as-is: NWS wants a literal comma, not %2C.
+        data = retry_once(lambda: get_json_within(TIMEOUT, f"{URL}?point={lat:.4f},{lon:.4f}",
+                                                  headers={"Accept": "application/geo+json"}), "NWS alerts")
+        result = {"source": SOURCE, "items": parse_alerts(data), "checked_at": now_iso()}
+    except Exception as exc:  # noqa: BLE001 - a tool must never raise
+        stale = cache_get("nws_alerts", key, common.STALE_MAX_S)
+        if stale is not None:
+            logger.warning("NWS alerts failed (%s: %s); using the cached result from %s", type(exc).__name__, exc,
+                           stale.get("checked_at"))
+            return {**stale, "stale": True}
+        return unavailable(SOURCE, f"{type(exc).__name__}: {exc}")
+    cache_put("nws_alerts", key, result)
+    return result

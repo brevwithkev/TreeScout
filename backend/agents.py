@@ -139,13 +139,16 @@ def _summarize(name, result, args, label=None):
         return f"{label or 'Route'}: {result['elevation_gain_m']} m elevation gain"
     if name == "get_nws_alerts":
         items = result["items"]
+        cached = f" (cached from {result['checked_at']}; live check failed)" if result.get("stale") else ""
         if not items:
-            return "NWS: no active alerts for this point"
+            return f"NWS: no active alerts for this point{cached}"
         return (f"NWS: {len(items)} active alert{'s' if len(items) != 1 else ''}; "
-                + "; ".join(f"{a['event']} ({a['severity']})" for a in items[:3]))
+                + "; ".join(f"{a['event']} ({a['severity']})" for a in items[:3]) + cached)
     if name == "get_hike_window":
         conditions = f" ({', '.join(result['conditions'])})" if result.get("conditions") else ""
-        return f"NWS hourly {result['window']}: {result['summary'].removeprefix('During your hike: ')}{conditions}"
+        cached = f" (cached from {result['checked_at']}; live check failed)" if result.get("stale") else ""
+        return (f"NWS hourly {result['window']}: {result['summary'].removeprefix('During your hike: ')}"
+                f"{conditions}{cached}")
     if name == "get_seasonal_hazards":
         titles = [i["title"] for i in result["items"]]
         return f"Seasonal: {', '.join(titles)} on {args[0]}" if titles else f"Seasonal: nothing in season on {args[0]}"
@@ -1078,12 +1081,16 @@ SPACE_KEYS = ("source", "kp_max", "aurora_chance", "checked_at")
 
 
 def _section(result, keys, source=None, error=None):
-    """Contract keys only; a failed or missing tool becomes {available: false, source, error}."""
+    """Contract keys only; a failed or missing tool becomes {available: false, source, error}.
+    A cached fallback after a failed live check also keeps "stale": true (alerts, hike_window)."""
     if result is None:
         return {"available": False, "source": source, "error": error}
     if _failed(result):
         return {"available": False, "source": result.get("source") or source, "error": result.get("error")}
-    return {k: result.get(k) for k in keys}
+    out = {k: result.get(k) for k in keys}
+    if result.get("stale") is True:
+        out["stale"] = True
+    return out
 
 
 ALERT_KEYS = ("source", "items", "checked_at")
