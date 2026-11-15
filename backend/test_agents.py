@@ -77,8 +77,8 @@ class FailFastTests(unittest.TestCase):
             result = agents.make_plan("2 km walk near Ypsilanti tomorrow", 42.0, -83.0)
             return result, time.perf_counter() - started
 
-    def test_planner_timeout_is_6_seconds_and_http_deadline_is_api_minimum(self):
-        self.assertEqual(agents.LLM_CALL_TIMEOUT_S, 6)
+    def test_planner_timeout_is_10_seconds_and_http_deadline_is_api_minimum(self):
+        self.assertEqual(agents.LLM_CALL_TIMEOUT_S, 10)
         self.assertEqual(agents.LLM_HTTP_DEADLINE_MS, 10_000)
 
     def test_overloaded_planner_goes_straight_to_rules(self):

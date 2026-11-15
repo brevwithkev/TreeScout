@@ -47,7 +47,7 @@ OUTSIDE = "Outside our coverage area (southeast Michigan)"
 COVERAGE = {"lat": (41.70, 43.40), "lon": (-84.70, -82.40)}  # southeast Michigan
 
 LLM_HTTP_DEADLINE_MS = 10_000  # sent to the API as the server deadline; it rejects anything under 10 s
-LLM_CALL_TIMEOUT_S = 6        # we stop waiting after this and fall back (fail fast on an overloaded model)
+LLM_CALL_TIMEOUT_S = 10       # we stop waiting after this and fall back (fail fast on an overloaded model)
 OVERLOAD_CODES = (429, 503, 504)
 PLANNER_MAX_TURNS = 6
 PLANNER_BUDGET_S = 14     # after this the rule-based planner finishes the job

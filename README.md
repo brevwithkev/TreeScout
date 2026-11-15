@@ -109,7 +109,7 @@ Parts that can't be computed are left out and the weights renormalized. The top 
 
 A Gemini safety checker reviews the same data. On a rejection the planner gets the problems back and picks another trail or an earlier start (**max 2 rounds**). Unresolved problems become warnings. If the plan moves your requested start time, the first warning says so (e.g. *"You asked to start at 15:30; moved to 15:00 so you finish at least 30 min before sunset (17:12)."*). There is also a warning when no trail is within 50% of the requested distance, and one for places outside southeast Michigan.
 
-**4. Fallback.** If Gemini is missing, rate-limited, overloaded or slower than 6 s per call, the request goes straight to the rule-based planner, with no retries. That planner parses miles/km, today/tomorrow/weekdays, times like "2 PM", and easy/hilly/shaded/dog. It picks the top-ranked trail, runs the same Python checks and marks the plan `parsed_by: "rules"`.
+**4. Fallback.** If Gemini is missing, rate-limited, overloaded or slower than 10 s per call, the request goes straight to the rule-based planner, with no retries. That planner parses miles/km, today/tomorrow/weekdays, times like "2 PM", and easy/hilly/shaded/dog. It picks the top-ranked trail, runs the same Python checks and marks the plan `parsed_by: "rules"`.
 
 **On the trail.** During the simulation the browser asks `/narrate/late` every 3 s after "Slow down". It is late when *current time + remaining distance at the current pace + 30 min* is after sunset; the browser uses the same rule if the endpoint is unavailable.
 
