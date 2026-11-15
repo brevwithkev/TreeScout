@@ -24,8 +24,7 @@ DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"   # "Rachel", an ElevenLabs pre-made v
 DEFAULT_MODEL_ID = "eleven_flash_v2_5"      # ElevenLabs' lowest-latency TTS model
 HAZARD_NARRATION_KM = 2.0
 LOOP_MAX_GAP_KM = 0.2
-LATE_PACE_FACTOR = 1.2         # 20% slower than planned
-LATE_OVERRUN_MIN = 15          # ...and projected to run at least this many minutes over
+LATE_BUFFER_MIN = 30           # must finish at least this long before sunset
 LATE_MIN_KM = 0.25             # too early to judge pace before this
 
 
@@ -139,8 +138,10 @@ def _hhmm_to_min(value):
 
 
 def check_late_pace(plan, current_km, elapsed_min):
-    """{"late": true, "text": ...} when the hiker is >20% slower than planned and is projected to finish
-    after sunset or at least 15 min over the plan; otherwise {"late": false}. Missing timing -> not late."""
+    """{"late": true, "text": ...} only when finishing at the current pace, plus a 30 min buffer, would end
+    after sunset:  (start + elapsed) + remaining_km * (elapsed / current_km) + 30 > sunset.
+    Otherwise {"late": false}, including when start or sunset is missing and before LATE_MIN_KM.
+    The frontend's fallback (frontend/app.js isLateLocally) uses the same rule."""
     trail = plan.get("trail") if isinstance(plan.get("trail"), dict) else {}
     timing = _section(plan, "timing")
     start_min, sunset_min = _hhmm_to_min(timing.get("start")), _hhmm_to_min(timing.get("sunset"))
@@ -148,20 +149,16 @@ def check_late_pace(plan, current_km, elapsed_min):
         return {"late": False}
     try:
         total_km = float(trail.get("distance_km") or 0.0)
-        est_min = float(timing.get("est_duration_min") or 0.0)
         current_km, elapsed_min = float(current_km), float(elapsed_min)
     except (TypeError, ValueError):
         return {"late": False}
-    if total_km <= 0 or est_min <= 0 or elapsed_min <= 0 or current_km < LATE_MIN_KM:
-        return {"late": False}
+    if total_km <= 0 or elapsed_min <= 0 or current_km < LATE_MIN_KM:
+        return {"late": False}  # too early: pace over a few metres is meaningless
 
-    planned_pace = est_min / total_km           # min per km
-    actual_pace = elapsed_min / current_km
-    if actual_pace <= planned_pace * LATE_PACE_FACTOR:
-        return {"late": False}
-
-    projected_total = actual_pace * total_km
-    if start_min + projected_total >= sunset_min or projected_total - est_min >= LATE_OVERRUN_MIN:
+    pace = elapsed_min / current_km                      # current minutes per km
+    remaining_km = max(0.0, total_km - current_km)
+    finish_min = start_min + elapsed_min + remaining_km * pace
+    if finish_min + LATE_BUFFER_MIN > sunset_min:
         return {"late": True,
                 "text": f"You're behind schedule. Turn back now to reach the trailhead before sunset at "
                         f"{timing['sunset']}."}

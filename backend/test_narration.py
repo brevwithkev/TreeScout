@@ -70,31 +70,65 @@ class NarrationTests(unittest.TestCase):
         self.assertEqual(narration.generate_narration({"trail": unavailable}), [])
 
 
-class LatePaceTests(unittest.TestCase):
-    # Planned pace: 75 min / 5 km = 15 min/km.
-    def test_on_pace_is_not_late(self):
-        self.assertEqual(narration.check_late_pace(fake_plan(), current_km=2.0, elapsed_min=30), {"late": False})
+def rolling_hills(start):
+    """6.8 km trail, sunset 17:12, planned 94 min (about 13.8 min/km)."""
+    return fake_plan(trail={"name": "Rolling Hills", "osm_id": 3, "distance_km": 6.8, "coords": ROUTE},
+                     timing={"start": start, "est_duration_min": 94, "sunset": "17:12"})
 
-    def test_slow_is_late(self):
-        result = narration.check_late_pace(fake_plan(), current_km=1.0, elapsed_min=30)  # 30 min/km
+
+SLOWED_PACE = 2 * 94 / 6.8   # "Slow down" halves walking speed: about 27.6 min/km
+
+
+class LatePaceTests(unittest.TestCase):
+    """late = (start + elapsed) + remaining_km * current pace + 30 min > sunset."""
+
+    def test_slowed_morning_hike_is_not_late(self):
+        # 10:30 start, slowed, 1 km in: now about 10:58, remaining 5.8 km x 27.6 = 160 min -> about 13:38,
+        # plus 30 min = 14:08, well before 17:12.
+        self.assertEqual(narration.check_late_pace(rolling_hills("10:30"), 1.0, SLOWED_PACE), {"late": False})
+
+    def test_slowed_afternoon_hike_is_late(self):
+        # 15:00 start, same trail and pace: about 18:08 finish, plus 30 min, is after 17:12.
+        result = narration.check_late_pace(rolling_hills("15:00"), 1.0, SLOWED_PACE)
         self.assertTrue(result["late"])
         self.assertEqual(result["text"],
                          "You're behind schedule. Turn back now to reach the trailhead before sunset at 17:12.")
 
+    def test_slowness_alone_is_not_late(self):
+        # Even 4x slower than planned, a 09:00 start finishes long before sunset.
+        self.assertEqual(narration.check_late_pace(rolling_hills("09:00"), 1.0, 4 * 94 / 6.8), {"late": False})
+
+    def test_on_pace_but_finishing_inside_the_buffer_is_late(self):
+        # 16:00 start at the planned pace: about 17:34 finish, after sunset -> late (pace is not a condition).
+        self.assertTrue(narration.check_late_pace(rolling_hills("16:00"), 1.0, 94 / 6.8)["late"])
+
+    def test_buffer_boundary(self):
+        # Finish exactly 30 min before sunset is not late; one minute later is.
+        plan = rolling_hills("10:00")
+        plan["timing"]["sunset"] = "12:30"   # 1 km in after 30 min at 30 min/km: finish 10:00+30+5.8*30 = 13:24
+        self.assertTrue(narration.check_late_pace(plan, 1.0, 30)["late"])
+        plan["timing"]["sunset"] = "13:54"   # 13:24 + 30 = 13:54: exactly on the buffer
+        self.assertEqual(narration.check_late_pace(plan, 1.0, 30), {"late": False})
+        plan["timing"]["sunset"] = "13:53"
+        self.assertTrue(narration.check_late_pace(plan, 1.0, 30)["late"])
+
     def test_missing_sunset_or_start_is_not_late(self):
         for missing in ("sunset", "start"):
-            timing = {k: v for k, v in TIMING.items() if k != missing}
+            timing = {k: v for k, v in rolling_hills("15:00")["timing"].items() if k != missing}
             with self.subTest(missing=missing):
-                self.assertEqual(narration.check_late_pace(fake_plan(timing=timing), 1.0, 30), {"late": False})
+                self.assertEqual(narration.check_late_pace(fake_plan(timing=timing), 1.0, SLOWED_PACE),
+                                 {"late": False})
         unavailable = {"available": False, "source": "x", "error": "down"}
         self.assertEqual(narration.check_late_pace(fake_plan(timing=unavailable), 1.0, 30), {"late": False})
 
     def test_too_early_to_judge(self):
-        self.assertEqual(narration.check_late_pace(fake_plan(), current_km=0.1, elapsed_min=10), {"late": False})
+        self.assertEqual(narration.check_late_pace(rolling_hills("15:00"), 0.1, 10), {"late": False})
 
     def test_endpoint(self):
-        body = main.LateNarrationRequest(plan=fake_plan(), current_km=1.0, elapsed_min=30)
+        body = main.LateNarrationRequest(plan=rolling_hills("15:00"), current_km=1.0, elapsed_min=SLOWED_PACE)
         self.assertTrue(main.narrate_late(body)["late"])
+        body = main.LateNarrationRequest(plan=rolling_hills("10:30"), current_km=1.0, elapsed_min=SLOWED_PACE)
+        self.assertEqual(main.narrate_late(body), {"late": False})
 
 
 class TtsTests(unittest.TestCase):

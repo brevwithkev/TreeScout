@@ -826,6 +826,10 @@ const LATE_URL = "/narrate/late"; // POST {"plan": {...}, "current_km": n, "elap
 const SIM_SECONDS = Math.max(1, Number(new URLSearchParams(location.search).get("simSeconds")) || 60);
 const LATE_CHECK_MS = 3000;
 const TURN_BACK_FALLBACK = "You're behind schedule. Turn back now to finish before sunset.";
+// Late rule, identical to backend/narration.py check_late_pace (used here when /narrate/late is unavailable):
+// late when (start + elapsed) + remaining_km * current pace + LATE_BUFFER_MIN > sunset.
+const LATE_BUFFER_MIN = 30;
+const LATE_MIN_KM = 0.25; // too early to judge pace before this
 // The late text only arrives with /narrate/late, so it can't be pre-fetched. This short fixed cue is
 // pre-fetched when the hiker slows down and plays instantly while the real text downloads.
 const TURN_BACK_CUE = "Turn back now.";
@@ -836,6 +840,7 @@ const hike = {
   planGen: 0,          // plan generation: bumps when a plan is unloaded; prefetched audio belongs to one plan
   plan: null, coords: null, cumKm: null, totalKm: 0,
   startMin: 600, durationMin: 60, sunsetMin: null,
+  planStartMin: null, sunsetText: null, // timing.start / timing.sunset exactly as the plan gives them
   progress: 0, elapsedMin: 0, speed: 1, state: "idle", // idle | running | paused | done
   lastTs: null, raf: 0,
   narration: [],       // [{key, coordIndex, text, url: Promise<string|null>}]
@@ -860,7 +865,7 @@ function minToHhmm(total) {
 
 function setHikeNote() {
   const notes = [hike.ttsDown && `Voice unavailable (${hike.ttsDown}); showing captions only.`,
-                 hike.lateDown && `Late check unavailable (${hike.lateDown}).`].filter(Boolean);
+                 hike.lateDown && `Late check: ${hike.lateDown}; using the same rule in the browser.`].filter(Boolean);
   els.hikeNote.textContent = notes.join(" ");
   els.hikeNote.hidden = !notes.length;
 }
@@ -1030,6 +1035,8 @@ function hikeLoad(plan, coords) {
   const minutes = toNum(timing.est_duration_min);
   hike.durationMin = Number.isFinite(minutes) && minutes > 0 ? minutes : (hike.totalKm / 5) * 60;
   hike.sunsetMin = hhmmToMin(timing.sunset);
+  hike.planStartMin = hhmmToMin(timing.start);
+  hike.sunsetText = str(timing.sunset);
 
   hike.ttsDown = null;
   hike.lateDown = null;
@@ -1151,7 +1158,7 @@ function renderHike() {
 
 function startLateChecks() {
   stopLateChecks();
-  if (hike.lateDown || hike.turnedBack) return;
+  if (hike.turnedBack) return;
   hike.lateTimer = setInterval(checkLate, LATE_CHECK_MS);
 }
 
@@ -1160,28 +1167,48 @@ function stopLateChecks() {
   hike.lateTimer = 0;
 }
 
+/** Same rule as the backend's check_late_pace. Returns {late, text?}. */
+function isLateLocally({ startMin, sunsetMin, sunsetText, totalKm, currentKm, elapsedMin }) {
+  if (startMin === null || sunsetMin === null) return { late: false };
+  if (!(totalKm > 0) || !(elapsedMin > 0) || !(currentKm >= LATE_MIN_KM)) return { late: false };
+  const pace = elapsedMin / currentKm; // current minutes per km
+  const finishMin = startMin + elapsedMin + Math.max(0, totalKm - currentKm) * pace;
+  if (finishMin + LATE_BUFFER_MIN > sunsetMin) {
+    return { late: true,
+             text: `You're behind schedule. Turn back now to reach the trailhead before sunset at ${sunsetText}.` };
+  }
+  return { late: false };
+}
+
 async function checkLate() {
   if (hike.lateInFlight || hike.turnedBack || hike.state !== "running") return;
   const gen = hike.gen;
+  const currentKm = Math.round(hike.progress * hike.totalKm * 100) / 100;
+  const elapsedMin = Math.round(hike.elapsedMin * 10) / 10;
+  const local = () => isLateLocally({ startMin: hike.planStartMin, sunsetMin: hike.sunsetMin,
+                                      sunsetText: hike.sunsetText, totalKm: hike.totalKm, currentKm, elapsedMin });
   hike.lateInFlight = true;
   try {
-    const response = await fetch(LATE_URL, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: hike.plan, current_km: Math.round(hike.progress * hike.totalKm * 100) / 100,
-                             elapsed_min: Math.round(hike.elapsedMin * 10) / 10 }),
-    });
-    if (gen !== hike.gen) return;
-    if (!response.ok) {
-      hike.lateDown = `${LATE_URL} returned ${response.status}`;
-      setHikeNote();
-      stopLateChecks();
-      return;
+    let result;
+    if (hike.lateDown) {
+      result = local();
+    } else {
+      try {
+        const response = await fetch(LATE_URL, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: hike.plan, current_km: currentKm, elapsed_min: elapsedMin }),
+        });
+        if (!response.ok) throw new Error(`${LATE_URL} returned ${response.status}`);
+        result = await response.json();
+      } catch (err) {
+        if (gen !== hike.gen) return;
+        hike.lateDown = err.message.startsWith(LATE_URL) ? err.message : `${LATE_URL} unreachable`;
+        setHikeNote();
+        result = local();
+      }
     }
-    const result = await response.json();
     if (gen !== hike.gen || !isObj(result) || result.late !== true || hike.turnedBack) return;
     turnBack(str(result.text) || TURN_BACK_FALLBACK, gen);
-  } catch (err) {
-    console.warn("Late check failed:", err);
   } finally {
     if (gen === hike.gen) hike.lateInFlight = false;
   }
