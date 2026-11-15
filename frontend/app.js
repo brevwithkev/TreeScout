@@ -518,9 +518,9 @@ function unavailable(why = "Unavailable") {
   return el("p", { class: "unavailable" }, el("span", { "aria-hidden": "true" }, "⊘ "), why);
 }
 
-function card(title, { body, source, date, cls = "" }) {
+function card(title, { body, source, date, cls = "", badge = null }) {
   return el("article", { class: `card ${cls}` },
-    el("header", { class: "card-head" }, el("h2", { class: "card-title" }, title)),
+    el("header", { class: "card-head" }, el("h2", { class: "card-title" }, title), badge),
     body ?? unavailable(),
     sourceLine(source, date));
 }
@@ -620,11 +620,31 @@ function climateCard(plan) {
     ["Avg precipitation", mm],
   ]);
   const years = c && str(c.years);
+  const a = phaseH(plan, "climate_anomaly");
+  const notable = a.state === "ok" && a.value.notable === true;
   return card("Typical conditions this week", {
-    body,
+    body: body && [body, anomalyBlock(a)],
     source: (c && str(c.source)) || "NASA POWER",
     date: years && `${years.replace("-", "–")} averages`,
+    badge: notable && el("span", { class: "badge badge--unusual", title: "The forecast differs from the 20-year normal" },
+                         "Unusual"),
   });
+}
+
+/** "This forecast: About 9F colder than normal for this week" (NWS hike window vs the POWER normals above). */
+function anomalyBlock(a) {
+  if (a.state === "missing") {
+    return el("p", { class: "anomaly" }, "This forecast vs normal: ", el("span", { class: "state state--info" }, NOT_CHECKED));
+  }
+  if (a.state === "unavailable") {
+    return el("p", { class: "anomaly unavailable" }, el("span", { "aria-hidden": "true" }, "⊘ "),
+      `This forecast vs normal: not compared${a.error ? `: ${a.error}` : ""}`);
+  }
+  const v = a.value;
+  const notable = v.notable === true;
+  return el("div", { class: "anomaly" },
+    el("p", { class: `anomaly-summary state state--${notable ? "warn" : "ok"}` }, str(v.summary) || "—"),
+    el("p", { class: "source-line" }, `Source: ${a.source || "NWS vs NASA POWER"}`));
 }
 
 function spaceWeatherCard(plan) {
@@ -783,7 +803,7 @@ const SEVERITY = { // icon (from .state--*) + word, never color alone
   Unknown: { cls: "info", word: "Unknown severity" },
 };
 const MODERATE_OR_WORSE = ["Moderate", "Severe", "Extreme"];
-const CONDITION_ICONS = { "low light": "🌇", "freezing temperatures": "🧊" };
+const CONDITION_ICONS = { "low light": "🌇", "freezing temperatures": "🧊", "unusual conditions": "🌡" };
 
 /** {state: "missing" | "unavailable" | "ok", value, items, source, error} for alerts, hike_window, seasonal, conditions. */
 function phaseH(plan, key) {

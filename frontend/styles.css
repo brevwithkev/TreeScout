@@ -203,6 +203,9 @@ input[type="date"], input[type="time"] { font-family: var(--font-mono); }
 .results { min-height: 2rem; }
 .info-empty { color: var(--ink-3); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.anomaly { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.anomaly p { margin: 0; }
+.anomaly-summary { font-weight: 500; }
 .card-title { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-2); margin: 0; }
 .trail-name { font-size: 1.1rem; font-weight: 600; color: var(--ink); margin: 0 0 var(--space-2); }
 .explanation { color: var(--ink-2); margin: var(--space-3) 0 0; }
@@ -420,6 +423,8 @@ input[type="date"], input[type="time"] { font-family: var(--font-mono); }
 .badge--recorded time { color: var(--ink); }
 .badge--partial  { color: var(--warn); border-color: currentColor; }
 .badge--partial::before  { content: "◐"; }          /* Partial data */
+.badge--unusual  { color: var(--warn); border-color: currentColor; }
+.badge--unusual::before  { content: "▲"; }          /* Unusual (climate anomaly) */
 
 /* Generic state pills for hazards, warnings, sources */
 .state { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: 500; }
