@@ -79,6 +79,53 @@ def rolling_hills(start):
 SLOWED_PACE = 2 * 94 / 6.8   # "Slow down" halves walking speed: about 27.6 min/km
 
 
+class TopHazardTests(unittest.TestCase):
+    DEER = {"title": "Firearm deer season", "advice": "Wear blaze orange", "source": "Michigan DNR season dates"}
+
+    def trailhead(self, **overrides):
+        return narration.generate_narration(fake_plan(**overrides))[0]["text"]
+
+    def extra_words(self, **overrides):
+        base = self.trailhead()
+        text = self.trailhead(**overrides)
+        self.assertTrue(text.startswith(base), text)
+        return text[len(base):].strip()
+
+    def test_deer_season(self):
+        extra = self.extra_words(seasonal={"source": "x", "items": [self.DEER]})
+        self.assertEqual(extra, "Deer season: wear orange.")
+
+    def test_priority_and_word_limit(self):
+        severe = {"event": "Severe Thunderstorm Warning", "severity": "Severe", "headline": "h"}
+        moderate = {"event": "Winter Weather Advisory", "severity": "Moderate", "headline": "h"}
+        cases = [
+            ({"alerts": {"source": "NWS", "items": [moderate, severe]}, "seasonal": {"source": "x", "items": [self.DEER]}},
+             "Severe Thunderstorm Warning in effect."),
+            ({"alerts": {"source": "NWS", "items": [moderate]}, "seasonal": {"source": "x", "items": [self.DEER]}},
+             "Winter Weather Advisory in effect."),
+            ({"hike_window": {"source": "NWS hourly", "max_precip_chance": 10, "conditions": ["Chance Thunderstorms"]},
+              "seasonal": {"source": "x", "items": [self.DEER]}}, "Thunderstorms forecast: watch the sky."),
+            ({"conditions": [{"title": "Freezing temperatures", "advice": "a", "source": "NWS hourly"}]},
+             "Freezing temps: watch for icy boardwalks."),
+            ({"conditions": [{"title": "Low light", "advice": "a", "source": "Computed"}]},
+             "Low light at the finish: bring a headlamp."),
+            ({"alerts": {"source": "NWS", "items": [{"event": "A very long made up alert name that goes on and on and "
+                                                              "on forever", "severity": "Severe"}]}}, None),
+        ]
+        for overrides, expected in cases:
+            with self.subTest(expected=expected):
+                extra = self.extra_words(**overrides)
+                if expected:
+                    self.assertEqual(extra, expected)
+                self.assertLess(len(extra.split()), 12, extra)
+
+    def test_old_plans_and_unavailable_sections_add_nothing(self):
+        self.assertEqual(self.extra_words(), "")
+        self.assertEqual(self.extra_words(alerts={"available": False, "source": "NWS", "error": "x"},
+                                          seasonal={"available": False, "source": "x", "error": "x"},
+                                          hike_window={"available": False, "source": "x", "error": "x"}), "")
+
+
 class LatePaceTests(unittest.TestCase):
     """late = (start + elapsed) + remaining_km * current pace + 30 min > sunset."""
 

@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from backend.tools.common import USER_AGENT
+from backend.tools.seasonal import narration_phrase
 from backend.tools.trails import haversine  # haversine([lat, lon], [lat, lon]) -> km
 
 logger = logging.getLogger("treescout.narration")
@@ -57,6 +58,45 @@ def _section(plan, key):
     return value if isinstance(value, dict) and value.get("available") is not False else {}
 
 
+TOP_HAZARD_MAX_WORDS = 11  # the trailhead line adds fewer than 12 words about the top hazard
+CONDITION_PHRASES = {
+    "Freezing temperatures": "Freezing temps: watch for icy boardwalks.",
+    "Low light": "Low light at the finish: bring a headlamp.",
+}
+
+
+def _limit_words(text, n=TOP_HAZARD_MAX_WORDS):
+    words = text.split()
+    return text if len(words) <= n else " ".join(words[:n]).rstrip(",;:") + "."
+
+
+def top_hazard_phrase(plan):
+    """A short line about the most important hazard, or None. Order: Severe/Extreme NWS alert, thunder or heavy
+    rain during the hike, Moderate alert, seasonal item, then trail conditions. Old plans without the fields: None."""
+    alerts = _section(plan, "alerts").get("items") or []
+    window = _section(plan, "hike_window")
+    seasonal = _section(plan, "seasonal").get("items") or []
+    conditions = plan.get("conditions") if isinstance(plan.get("conditions"), list) else []
+    phrase = None
+    severe = [a for a in alerts if a.get("severity") in ("Extreme", "Severe")]
+    moderate = [a for a in alerts if a.get("severity") == "Moderate"]
+    if severe:
+        phrase = f"{severe[0].get('event') or 'Severe weather alert'} in effect."
+    elif any("thunder" in str(c).lower() for c in window.get("conditions") or []):
+        phrase = "Thunderstorms forecast: watch the sky."
+    elif (window.get("max_precip_chance") or 0) >= 70:
+        phrase = f"Rain likely: {window['max_precip_chance']}% chance during your hike."
+    elif moderate:
+        phrase = f"{moderate[0].get('event') or 'Weather alert'} in effect."
+    elif seasonal:
+        title = seasonal[0].get("title") or "Seasonal hazard"
+        phrase = narration_phrase(title) or f"{title}."
+    elif conditions and isinstance(conditions[0], dict):
+        title = conditions[0].get("title") or "Trail conditions"
+        phrase = CONDITION_PHRASES.get(title) or f"{title}."
+    return _limit_words(phrase) if phrase else None
+
+
 def generate_narration(plan):
     """Narration points from route geometry, timing, weather and hazards, sorted by coord_index.
 
@@ -89,6 +129,9 @@ def generate_narration(plan):
         welcome += f" Sunset is at {sunset}."
     if summary:
         welcome += f" Weather: {summary}."
+    hazard = top_hazard_phrase(plan)
+    if hazard:
+        welcome += f" {hazard}"
     points = [{"coord_index": 0, "km": 0.0, "kind": "trailhead", "text": welcome}]
 
     half_km = round(total_km / 2.0, 2)
