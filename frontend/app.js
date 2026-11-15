@@ -52,12 +52,19 @@ const els = {
   hikeProgressFill: $("#hike-progress-fill"),
   simPlay: $("#sim-play"),
   simReset: $("#sim-reset"),
-  simSlow: $("#sim-slow"),
+  pace: $("#pace"),
+  paceSlow: $("#pace-slow"),
+  paceFast: $("#pace-fast"),
+  playbackBtns: [...document.querySelectorAll("[data-playback]")],
+  headBack: $("#head-back"),
+  onSchedule: $("#onschedule"),
+  simEta: $("#sim-eta"),
+  simEtaBox: $("#sim-eta-box"),
   simClock: $("#sim-clock"),
   simKm: $("#sim-km"),
   simSunset: $("#sim-sunset"),
   simSunsetBox: $("#sim-sunset-box"),
-  simSpeed: $("#sim-speed"),
+  simPace: $("#sim-pace"),
   hikeNote: $("#hike-note"),
 };
 
@@ -967,18 +974,26 @@ function renderSources(plan) {
 // Backend contracts (backend/main.py TTSRequest / LateNarrationRequest, backend/narration.py):
 const TTS_URL = "/tts";           // POST {"text": "..." (1-1000 chars)}                     -> audio/mpeg; 502 if TTS fails
 const LATE_URL = "/narrate/late"; // POST {"plan": {...}, "current_km": n, "elapsed_min": n} -> {"late": false} | {"late": true, "text": "..."}
-// The whole hike plays in about this many real seconds at normal speed (?simSeconds=N to change it).
+// PLAYBACK speed: how fast the demo plays (the whole hike at planned pace takes about this many real
+// seconds). It never changes the hiker's pace or the late math. ?simSeconds=N sets Normal (tests).
 const SIM_SECONDS = Math.max(1, Number(new URLSearchParams(location.search).get("simSeconds")) || 60);
+const PLAYBACK = { normal: SIM_SECONDS, fast: SIM_SECONDS / 3, veryfast: SIM_SECONDS / 10 }; // 60 / 20 / 6 s
+// HIKER PACE vs plan: 1 = the planned pace (est_duration_min for the trail). At 0.5x each km takes twice the clock.
+const PACE_MIN = 0.5, PACE_MAX = 1.5, PACE_SLOW = 0.6, PACE_FAST = 1.3;
 const LATE_CHECK_MS = 3000;
 const TURN_BACK_FALLBACK = "You're behind schedule. Turn back now to finish before sunset.";
 // Late rule, identical to backend/narration.py check_late_pace (used here when /narrate/late is unavailable):
 // late when (start + elapsed) + remaining_km * current pace + LATE_BUFFER_MIN > sunset.
+// "current pace" there is the average so far (elapsed / km hiked), so after speeding up the hiker is back on
+// schedule once the average has recovered, not the moment the slider moves.
 const LATE_BUFFER_MIN = 30;
 const LATE_MIN_KM = 0.25; // too early to judge pace before this
-// The late text only arrives with /narrate/late, so it can't be pre-fetched. This short fixed cue is
-// pre-fetched when the hiker slows down and plays instantly while the real text downloads.
+// Fixed voice cues, pre-fetched when a plan loads and kept for the page. The late text itself only arrives
+// with /narrate/late; the short TURN BACK cue plays instantly while it downloads.
 const TURN_BACK_CUE = "Turn back now.";
-let turnBackCueUrl = null; // Promise<string|null>; fetched once per page, kept across plans
+const BACK_ON_SCHEDULE_CUE = "You're back on schedule.";
+const HEADING_BACK_CUE = "Heading back to the trailhead.";
+const cueUrls = {}; // text -> Promise<string|null>
 
 const hike = {
   gen: 0,              // run generation: bumps on every reset; playback/late checks from older runs are ignored
@@ -986,13 +1001,18 @@ const hike = {
   plan: null, coords: null, cumKm: null, totalKm: 0,
   startMin: 600, durationMin: 60, sunsetMin: null,
   planStartMin: null, sunsetText: null, // timing.start / timing.sunset exactly as the plan gives them
-  progress: 0, elapsedMin: 0, speed: 1, state: "idle", // idle | running | paused | done
+  posKm: 0, elapsedMin: 0, state: "idle", // idle | running | paused | done
+  pace: 1, playback: "normal",
+  direction: "out",    // out | back (after "Head back")
+  turnKm: 0,           // where the hiker turned around
+  late: false,         // inside a late episode (TURN BACK shown)
   lastTs: null, raf: 0,
   narration: [],       // [{key, coordIndex, text, url: Promise<string|null>}]
   spoken: new Set(),
   blobUrls: [], prefetch: null,
   ttsDown: null, lateDown: null,
-  lateTimer: 0, lateInFlight: false, turnedBack: false,
+  lateTimer: 0, lateInFlight: false, lateAgain: false,
+  onScheduleTimer: 0,
   marker: null, layer: null,
 };
 
@@ -1025,21 +1045,23 @@ let captionTimer = 0;
 
 /** POST /tts and return a blob URL (or null). planGen ties the audio to one plan (revoked when that
  *  plan unloads); planGen null means page-level audio that is kept (the turn-back cue). */
-async function fetchTts(text, signal, planGen) {
+async function fetchTts(text, signal, planGen, { quiet = false } = {}) {
   if (hike.ttsDown) return null;
+  // quiet: a failure doesn't switch voice off (e.g. a cue that demo mode has no recording for)
   const current = () => planGen === null || planGen === hike.planGen;
+  const report = () => !quiet && current();
   try {
     const response = await fetch(TTS_URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }), signal,
     });
     if (!response.ok) {
-      if (current()) { hike.ttsDown = `${TTS_URL} returned ${response.status}`; setHikeNote(); }
+      if (report()) { hike.ttsDown = `${TTS_URL} returned ${response.status}`; setHikeNote(); }
       return null;
     }
     const type = response.headers.get("content-type") || "";
     if (!/^audio\/|octet-stream/.test(type)) {
-      if (current()) { hike.ttsDown = `${TTS_URL} sent ${type || "no content type"}, not audio`; setHikeNote(); }
+      if (report()) { hike.ttsDown = `${TTS_URL} sent ${type || "no content type"}, not audio`; setHikeNote(); }
       return null;
     }
     const url = URL.createObjectURL(await response.blob());
@@ -1064,6 +1086,21 @@ function prefetchNarration(plan, planGen) {
                url: fetchTts(str(n.text), hike.prefetch.signal, planGen) };
     })
     .sort((a, b) => a.coordIndex - b.coordIndex);
+}
+
+/** Fetch the fixed cues once per page (a failed one is tried again with the next plan). */
+function prefetchCues() {
+  for (const text of [TURN_BACK_CUE, BACK_ON_SCHEDULE_CUE, HEADING_BACK_CUE]) {
+    if (cueUrls[text]) continue;
+    cueUrls[text] = fetchTts(text, undefined, null, { quiet: true }).then((url) => {
+      if (!url) delete cueUrls[text];
+      return url;
+    });
+  }
+}
+
+function cue(text) {
+  return cueUrls[text] || Promise.resolve(null); // no audio: the caption shows instead
 }
 
 function showCaption(text) {
@@ -1164,6 +1201,10 @@ function hikeUnload() {
   els.hikeBar.hidden = true;
 }
 
+function setSimControlsDisabled(disabled) {
+  for (const b of [els.simPlay, els.simReset, els.pace, els.paceSlow, els.paceFast, ...els.playbackBtns]) b.disabled = disabled;
+}
+
 function showEmptyHikeBar() {
   els.hikeBar.hidden = false;
   els.hikeProgressFill.style.width = "0%";
@@ -1172,9 +1213,10 @@ function showEmptyHikeBar() {
   els.simKm.textContent = "—";
   els.simSunset.textContent = "—";
   els.simSunsetBox.classList.remove("readout--warn", "readout--bad");
-  els.simSpeed.textContent = "—";
+  els.simPace.textContent = "—";
+  els.simEtaBox.hidden = true;
   els.simPlay.textContent = "▶ Simulate hike";
-  for (const b of [els.simPlay, els.simReset, els.simSlow]) b.disabled = true;
+  setSimControlsDisabled(true);
   els.hikeNote.textContent = "No route to simulate for this plan.";
   els.hikeNote.hidden = false;
 }
@@ -1185,8 +1227,7 @@ function hikeLoad(plan, coords) {
     showEmptyHikeBar(); // e.g. outside coverage: no stale distance, Simulate disabled
     return;
   }
-  els.simPlay.disabled = false;
-  els.simReset.disabled = false;
+  setSimControlsDisabled(false);
   hike.plan = plan;
   hike.coords = coords;
   hike.cumKm = cumulativeKm(coords);
@@ -1207,8 +1248,16 @@ function hikeLoad(plan, coords) {
   hike.lateDown = null;
   setHikeNote();
   prefetchNarration(plan, hike.planGen);
+  prefetchCues();
   els.hikeBar.hidden = false;
   renderHike();
+}
+
+function clearBanners() {
+  hike.late = false;
+  els.turnback.hidden = true;
+  clearTimeout(hike.onScheduleTimer);
+  els.onSchedule.hidden = true;
 }
 
 function hikeReset() {
@@ -1216,17 +1265,20 @@ function hikeReset() {
   cancelAnimationFrame(hike.raf);
   stopLateChecks();
   stopAudio();
+  clearBanners();
   hike.state = "idle";
-  hike.progress = 0;
+  hike.posKm = 0;
   hike.elapsedMin = 0;
-  hike.speed = 1;
+  hike.pace = 1;
+  hike.direction = "out";
+  hike.turnKm = 0;
   hike.lastTs = null;
   hike.spoken = new Set();
-  hike.turnedBack = false;
   hike.lateInFlight = false;
-  els.turnback.hidden = true;
+  hike.lateAgain = false;
   if (hike.layer) hike.layer.clearLayers();
   hike.marker = null;
+  setHikeNote(); // drops a "Back at the trailhead" note from the last run
   if (hike.coords) renderHike();
 }
 
@@ -1241,46 +1293,82 @@ function hikeStart() {
   }
   hike.state = "running";
   hike.lastTs = null;
-  if (hike.speed < 1 && !hike.turnedBack) startLateChecks();
+  if (hike.direction === "out") startLateChecks();
   if (player.src && player.paused && audioBusy) player.play().catch(() => {});
   hike.raf = requestAnimationFrame(hikeFrame);
   renderHike();
 }
 
+/** Pause also puts the hiker back on planned pace and clears the TURN BACK / back-on-schedule banners. */
 function hikePause() {
   hike.state = "paused";
   cancelAnimationFrame(hike.raf);
   stopLateChecks();
   player.pause();
+  hike.pace = 1;
+  clearBanners();
   renderHike();
 }
 
-function hikeSlowDown() {
-  if (hike.speed < 1 || !hike.coords) return;
-  hike.speed = 0.5; // the hiker walks half as fast; the simulated clock keeps its pace, so time slips
-  if (!turnBackCueUrl && !hike.ttsDown) {
-    turnBackCueUrl = fetchTts(TURN_BACK_CUE, undefined, null).then((url) => url || (turnBackCueUrl = null));
-  }
-  if (hike.state === "running") startLateChecks();
+function setPlayback(mode) {
+  if (!(mode in PLAYBACK)) return;
+  hike.playback = mode;
   renderHike();
+}
+
+/** Hiker pace vs plan (0.5-1.5). A change triggers a late check right away. */
+function setPace(value) {
+  const pace = Math.min(PACE_MAX, Math.max(PACE_MIN, Math.round(Number(value) * 100) / 100));
+  if (!Number.isFinite(pace) || pace === hike.pace) { renderHike(); return; }
+  hike.pace = pace;
+  renderHike();
+  if (hike.state === "running" && hike.direction === "out") checkLate();
+}
+
+function paceWords(pace) {
+  return pace < 0.975 ? "Slower than planned" : pace > 1.025 ? "Faster than planned" : "On pace";
+}
+
+/** Turn around: walk back along the route already hiked, to the trailhead. The clock keeps running. */
+function headBack() {
+  if (!hike.coords || hike.direction === "back" || hike.state === "idle" || hike.state === "done") return;
+  hike.direction = "back";
+  hike.turnKm = hike.posKm;
+  stopLateChecks();
+  clearBanners();
+  enqueueLine({ text: HEADING_BACK_CUE, url: cue(HEADING_BACK_CUE), gen: hike.gen }, { interrupt: true });
+  renderHike();
+}
+
+function kmPerMin() {
+  return (hike.totalKm / hike.durationMin) * hike.pace; // at pace 1 the trail takes est_duration_min
 }
 
 function hikeFrame(ts) {
   if (hike.state !== "running") return;
   const dt = hike.lastTs === null ? 0 : Math.min(0.25, (ts - hike.lastTs) / 1000);
   hike.lastTs = ts;
-  hike.progress = Math.min(1, hike.progress + (dt * hike.speed) / SIM_SECONDS);
-  hike.elapsedMin += (dt * hike.durationMin) / SIM_SECONDS;
+  // Playback sets how many simulated minutes pass per real second; pace sets how far the hiker gets in them.
+  const minutes = (dt * hike.durationMin) / PLAYBACK[hike.playback];
+  hike.elapsedMin += minutes;
+  const km = minutes * kmPerMin();
 
-  const { latlng, index } = positionAt(hike.progress);
-  hike.marker.setLatLng(latlng);
-  for (const line of hike.narration) {
-    if (line.coordIndex <= index && !hike.spoken.has(line.key)) {
-      hike.spoken.add(line.key);
-      enqueueLine({ text: line.text, url: line.url, gen: hike.gen });
+  if (hike.direction === "out") {
+    hike.posKm = Math.min(hike.totalKm, hike.posKm + km);
+    const { index } = positionAt(hike.posKm / hike.totalKm);
+    for (const line of hike.narration) {
+      if (line.coordIndex <= index && !hike.spoken.has(line.key)) {
+        hike.spoken.add(line.key);
+        enqueueLine({ text: line.text, url: line.url, gen: hike.gen });
+      }
     }
+  } else {
+    hike.posKm = Math.max(0, hike.posKm - km);
   }
-  if (hike.progress >= 1) {
+  hike.marker.setLatLng(positionAt(hike.posKm / hike.totalKm).latlng);
+
+  const finished = hike.direction === "out" ? hike.posKm >= hike.totalKm : hike.posKm <= 0;
+  if (finished) {
     hike.state = "done";
     stopLateChecks();
   } else {
@@ -1289,14 +1377,30 @@ function hikeFrame(ts) {
   renderHike();
 }
 
+function fmtLeft(min) {
+  const m = Math.floor(Math.abs(min));
+  return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`;
+}
+
 function renderHike() {
-  const pct = Math.round(hike.progress * 1000) / 10;
+  const pct = Math.round((hike.posKm / (hike.totalKm || 1)) * 1000) / 10;
   els.hikeProgressFill.style.width = `${pct}%`;
   els.hikeProgress.setAttribute("aria-valuenow", String(Math.round(pct)));
   const clock = hike.startMin + hike.elapsedMin;
   els.simClock.textContent = minToHhmm(clock);
-  els.simKm.textContent = `${(hike.progress * hike.totalKm).toFixed(2)} / ${hike.totalKm.toFixed(1)} km`;
-  els.simSpeed.textContent = hike.speed < 1 ? "½× (slowed)" : "1×";
+  const back = hike.direction === "back";
+  els.simKm.textContent = back
+    ? `${(2 * hike.turnKm - hike.posKm).toFixed(2)} km · ${hike.posKm.toFixed(2)} to start`
+    : `${hike.posKm.toFixed(2)} / ${hike.totalKm.toFixed(1)} km`;
+
+  // Pace: slider, readout and its word (never color alone)
+  els.pace.value = String(hike.pace);
+  const words = paceWords(hike.pace);
+  els.pace.setAttribute("aria-valuetext", `${words}, ${hike.pace.toFixed(2)} times planned`);
+  els.simPace.textContent = `${hike.pace.toFixed(1)}× · ${words.replace(" than planned", "")}`;
+  els.paceSlow.setAttribute("aria-pressed", String(hike.pace === PACE_SLOW));
+  els.paceFast.setAttribute("aria-pressed", String(hike.pace === PACE_FAST));
+  for (const b of els.playbackBtns) b.setAttribute("aria-pressed", String(b.dataset.playback === hike.playback));
 
   els.simSunsetBox.classList.remove("readout--warn", "readout--bad");
   if (hike.sunsetMin === null) {
@@ -1307,23 +1411,37 @@ function renderHike() {
       els.simSunset.textContent = "After sunset";
       els.simSunsetBox.classList.add("readout--bad");
     } else {
-      els.simSunset.textContent = left >= 60 ? `${Math.floor(left / 60)} h ${String(Math.floor(left % 60)).padStart(2, "0")} min`
-                                             : `${Math.floor(left)} min`;
+      els.simSunset.textContent = fmtLeft(left);
       if (left < 30) els.simSunsetBox.classList.add("readout--warn");
+    }
+  }
+
+  // Heading back: (projected) arrival at the trailhead vs sunset
+  els.simEtaBox.hidden = !back;
+  if (back) {
+    const arrive = hike.state === "done" ? clock : clock + hike.posKm / kmPerMin();
+    const vsSunset = hike.sunsetMin === null ? ""
+      : hike.sunsetMin - arrive >= 0 ? ` · ${fmtLeft(hike.sunsetMin - arrive)} before sunset`
+      : ` · ${fmtLeft(arrive - hike.sunsetMin)} after sunset`;
+    els.simEta.textContent = `${hike.state === "done" ? "" : "~"}${minToHhmm(arrive)}${vsSunset}`;
+    els.simEtaBox.classList.toggle("readout--bad", hike.sunsetMin !== null && arrive > hike.sunsetMin);
+    if (hike.state === "done") {
+      els.hikeNote.textContent = `Back at the trailhead at ${minToHhmm(arrive)}${vsSunset}.`;
+      els.hikeNote.hidden = false;
     }
   }
 
   els.simPlay.textContent = { idle: "▶ Simulate hike", running: "❚❚ Pause", paused: "▶ Resume",
                               done: "↺ Simulate again" }[hike.state];
-  els.simSlow.disabled = hike.speed < 1 || hike.state === "idle" || hike.state === "done";
-  els.simSlow.textContent = hike.speed < 1 ? "🐢 Slowed down" : "🐢 Slow down";
+  const active = hike.state === "running" || hike.state === "paused";
+  els.headBack.disabled = !active || back;
 }
 
-/* ---------- late check after slowing down ---------- */
+/* ---------- late check: every 3 s and on every pace change ---------- */
 
 function startLateChecks() {
   stopLateChecks();
-  if (hike.turnedBack) return;
+  if (hike.direction !== "out") return;
   hike.lateTimer = setInterval(checkLate, LATE_CHECK_MS);
 }
 
@@ -1346,9 +1464,10 @@ function isLateLocally({ startMin, sunsetMin, sunsetText, totalKm, currentKm, el
 }
 
 async function checkLate() {
-  if (hike.lateInFlight || hike.turnedBack || hike.state !== "running") return;
+  if (hike.direction !== "out" || hike.state !== "running") return;
+  if (hike.lateInFlight) { hike.lateAgain = true; return; } // e.g. pace changed mid-request: check again after
   const gen = hike.gen;
-  const currentKm = Math.round(hike.progress * hike.totalKm * 100) / 100;
+  const currentKm = Math.round(hike.posKm * 100) / 100;
   const elapsedMin = Math.round(hike.elapsedMin * 10) / 10;
   const local = () => isLateLocally({ startMin: hike.planStartMin, sunsetMin: hike.sunsetMin,
                                       sunsetText: hike.sunsetText, totalKm: hike.totalKm, currentKm, elapsedMin });
@@ -1372,25 +1491,38 @@ async function checkLate() {
         result = local();
       }
     }
-    if (gen !== hike.gen || !isObj(result) || result.late !== true || hike.turnedBack) return;
-    turnBack(str(result.text) || TURN_BACK_FALLBACK, gen);
+    if (gen !== hike.gen || !isObj(result) || hike.direction !== "out" || hike.state !== "running") return;
+    if (result.late === true && !hike.late) turnBack(str(result.text) || TURN_BACK_FALLBACK, gen);
+    else if (result.late === false && hike.late) backOnSchedule(gen);
   } finally {
-    if (gen === hike.gen) hike.lateInFlight = false;
+    if (gen === hike.gen) {
+      hike.lateInFlight = false;
+      if (hike.lateAgain) { hike.lateAgain = false; checkLate(); }
+    }
   }
 }
 
+/** Start of a late episode: banner + voice once (until back on schedule, Pause or Reset). */
 function turnBack(text, gen) {
-  hike.turnedBack = true; // shown and spoken only once per run
-  stopLateChecks();
+  hike.late = true;
+  clearTimeout(hike.onScheduleTimer);
+  els.onSchedule.hidden = true;
   els.turnbackText.textContent = text;
   els.turnback.hidden = false;
+  renderHike();
   const spoken = fetchTts(text, undefined, hike.planGen); // starts now, downloads while the cue plays
-  if (turnBackCueUrl) {
-    enqueueLine({ text: TURN_BACK_CUE, url: turnBackCueUrl, gen }, { interrupt: true });
-    enqueueLine({ text, url: spoken, gen });
-  } else {
-    enqueueLine({ text, url: spoken, gen }, { interrupt: true });
-  }
+  enqueueLine({ text: TURN_BACK_CUE, url: cue(TURN_BACK_CUE), gen }, { interrupt: true });
+  enqueueLine({ text, url: spoken, gen });
+}
+
+/** End of a late episode (the hiker sped up): hide TURN BACK, show and say "back on schedule" once. */
+function backOnSchedule(gen) {
+  hike.late = false;
+  els.turnback.hidden = true;
+  els.onSchedule.hidden = false;
+  clearTimeout(hike.onScheduleTimer);
+  hike.onScheduleTimer = setTimeout(() => { els.onSchedule.hidden = true; }, 6000);
+  enqueueLine({ text: BACK_ON_SCHEDULE_CUE, url: cue(BACK_ON_SCHEDULE_CUE), gen }, { interrupt: true });
 }
 
 /* ---------- voice input ---------- */
@@ -1473,7 +1605,11 @@ function initVoice() {
 function initHike() {
   els.simPlay.addEventListener("click", () => (hike.state === "running" ? hikePause() : hikeStart()));
   els.simReset.addEventListener("click", hikeReset);
-  els.simSlow.addEventListener("click", hikeSlowDown);
+  els.pace.addEventListener("input", () => setPace(els.pace.value));
+  els.paceSlow.addEventListener("click", () => setPace(PACE_SLOW));
+  els.paceFast.addEventListener("click", () => setPace(PACE_FAST));
+  for (const b of els.playbackBtns) b.addEventListener("click", () => setPlayback(b.dataset.playback));
+  els.headBack.addEventListener("click", headBack);
 }
 
 /* ==========================================================================

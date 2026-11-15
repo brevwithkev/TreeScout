@@ -126,7 +126,7 @@ A Gemini safety checker reviews the same data. On a rejection the planner gets t
 
 **4. Fallback.** If Gemini is missing, rate-limited, overloaded or slower than 10 s per call, the request goes straight to the rule-based planner, with no retries. That planner parses miles/km, today/tomorrow/weekdays, times like "2 PM", and easy/hilly/shaded/dog. It picks the top-ranked trail, runs the same Python checks and marks the plan `parsed_by: "rules"`.
 
-**On the trail.** During the simulation the browser asks `/narrate/late` every 3 s after "Slow down". It is late when *current time + remaining distance at the current pace + 30 min* is after sunset; the browser uses the same rule if the endpoint is unavailable.
+**On the trail.** The hike bar keeps two ideas apart. *Playback* (Normal / Fast / Very fast: the whole hike in about 60 / 20 / 6 s; `?simSeconds=N` sets Normal) only changes how fast the demo plays. *Hiker pace vs plan* (a 0.5x-1.5x slider plus "Slow down" 0.6x and "Speed up" 1.3x) changes how far the hiker gets per simulated minute, so at 0.5x the clock runs twice as long per km. The browser asks `/narrate/late` every 3 s and whenever the pace changes. It is late when *current time + remaining distance at the average pace so far + 30 min* is after sunset; the browser uses the same rule if the endpoint is unavailable. Going late shows TURN BACK and speaks it once; speeding up until the average pace recovers shows and says "You're back on schedule." "Head back" walks the hiker back along the route to the trailhead and shows the arrival time against sunset. Pause and Reset put the pace back to 1x and clear the banners.
 
 ## Data sources
 

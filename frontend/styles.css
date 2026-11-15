@@ -623,6 +623,30 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 .hike-controls, .hike-readouts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
 .hike-controls .btn { padding: var(--space-1) var(--space-3); }
 .sim-play { min-width: 9.5rem; }
+
+/* Playback speed: segmented toggle (state from aria-pressed: fill + check mark, not color alone) */
+.seg { display: inline-flex; align-items: center; gap: 0; margin-left: auto; }
+.seg-label { margin-right: var(--space-2); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); }
+.seg-btn {
+  padding: var(--space-1) var(--space-2);
+  font: inherit; font-size: 0.8rem;
+  color: var(--ink-2); background: var(--surface-2);
+  border: 1px solid var(--line); cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 0; }
+.seg-btn:first-of-type { border-radius: var(--radius) 0 0 var(--radius); }
+.seg-btn:last-of-type { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg-btn[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.seg-btn[aria-pressed="true"]::before { content: "✓ "; }
+.seg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Hiker pace vs plan */
+.pace { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.pace-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); }
+.pace-slider { flex: 1 1 12rem; min-width: 10rem; display: flex; flex-direction: column; }
+.pace-slider input { width: 100%; margin: 0; accent-color: var(--accent); }
+.pace-scale { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--ink-3); }
+.pace .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .hike-note { margin: 0; font-size: 0.78rem; color: var(--ink-3); }
 .hike-note::before { content: "i "; font-style: italic; font-weight: 700; color: var(--info); }
 
@@ -643,6 +667,24 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline-offs
 }
 .turnback-title { display: block; font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 600; letter-spacing: 0.06em; line-height: 1.1; }
 .turnback-text { margin: var(--space-2) 0 0; color: var(--accent-ink); font-size: 1rem; }
+.turnback-btn { margin-top: var(--space-3); color: var(--ink); background: var(--bg); border-color: var(--accent-ink); font-weight: 600; }
+.turnback-btn:hover { filter: brightness(1.2); border-color: var(--accent-ink); }
+
+/* Back on schedule: green status at the top of the map (icon + words + color) */
+.onschedule {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  padding: var(--space-3) var(--space-5);
+  font-size: 1.15rem; font-weight: 600;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, var(--surface));
+  border: 1px solid var(--ok); border-left-width: 4px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
 @media (prefers-reduced-motion: no-preference) {
   .turnback:not([hidden]) { animation: turnback-in 260ms ease-out; }
 }

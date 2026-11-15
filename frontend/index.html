@@ -120,6 +120,10 @@
         <div id="turnback" class="turnback" role="alert" hidden>
           <strong class="turnback-title"><span aria-hidden="true">⚠</span> TURN BACK</strong>
           <p id="turnback-text" class="turnback-text"></p>
+          <button type="button" id="head-back" class="btn turnback-btn">↩ Head back</button>
+        </div>
+        <div id="onschedule" class="onschedule" role="status" hidden>
+          <span aria-hidden="true">✓</span> Back on schedule
         </div>
 
         <div class="map-bottom">
@@ -132,13 +136,31 @@
             <div class="hike-controls">
               <button type="button" id="sim-play" class="btn btn--primary sim-play">▶ Simulate hike</button>
               <button type="button" id="sim-reset" class="btn">↺ Reset</button>
-              <button type="button" id="sim-slow" class="btn" disabled>🐢 Slow down</button>
+              <div class="seg" role="group" aria-label="Playback speed (how fast the demo plays; not the hiker's pace)">
+                <span class="seg-label" aria-hidden="true">Playback</span>
+                <button type="button" class="seg-btn" data-playback="normal" aria-pressed="true">Normal</button>
+                <button type="button" class="seg-btn" data-playback="fast" aria-pressed="false">Fast</button>
+                <button type="button" class="seg-btn" data-playback="veryfast" aria-pressed="false">Very fast</button>
+              </div>
+            </div>
+            <div class="pace" role="group" aria-labelledby="pace-label">
+              <span id="pace-label" class="pace-label">Hiker pace vs plan</span>
+              <button type="button" id="pace-slow" class="btn btn--small">🐢 Slow down</button>
+              <div class="pace-slider">
+                <input type="range" id="pace" min="0.5" max="1.5" step="0.05" value="1" aria-labelledby="pace-label"
+                       aria-valuetext="On pace, 1.0 times planned">
+                <div class="pace-scale" aria-hidden="true">
+                  <span>Slower than planned</span><span>On pace</span><span>Faster than planned</span>
+                </div>
+              </div>
+              <button type="button" id="pace-fast" class="btn btn--small">🐇 Speed up</button>
             </div>
             <div class="hike-readouts">
               <div class="readout"><span class="label">Clock</span><span id="sim-clock" class="value">--:--</span></div>
               <div class="readout"><span class="label">Hiked</span><span id="sim-km" class="value">0.00 km</span></div>
               <div id="sim-sunset-box" class="readout readout--sunset"><span class="label">Sunset in</span><span id="sim-sunset" class="value">—</span></div>
-              <div class="readout"><span class="label">Speed</span><span id="sim-speed" class="value">1×</span></div>
+              <div class="readout"><span class="label">Pace</span><span id="sim-pace" class="value">1.0×</span></div>
+              <div id="sim-eta-box" class="readout" hidden><span class="label">Back at start</span><span id="sim-eta" class="value">—</span></div>
             </div>
             <p id="hike-note" class="hike-note" hidden></p>
           </div>
