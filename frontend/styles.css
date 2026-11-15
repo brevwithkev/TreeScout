@@ -57,6 +57,9 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The hidden attribute must win over component display rules (.hike-bar is flex, .btn inline-flex, ...). */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   padding: var(--space-6) var(--space-4);
@@ -249,6 +252,9 @@ input[type="date"], input[type="time"] { font-family: var(--font-mono); }
 .alt-selected { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-size: 0.78rem; color: var(--accent); visibility: hidden; }
 .alt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .alt[aria-pressed="true"] .alt-selected { visibility: visible; }
+.alt-go { grid-row: 1 / span 2; grid-column: 2; align-self: center; font-size: 0.78rem; color: var(--accent); }
+.alt:hover:not(:disabled) .alt-go { text-decoration: underline; }
+.alt:disabled { cursor: not-allowed; opacity: 0.6; }
 
 /* Agent trace */
 .trace-step { display: grid; grid-template-columns: 22px 1fr; gap: var(--space-2); animation: trace-in 200ms ease-out; }

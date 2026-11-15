@@ -370,13 +370,15 @@ function drawTrail(coords, name) {
 
 let requestSeq = 0; // ignore responses from superseded requests
 
-async function fetchPlan(text, useMock) {
+/** osmId: a trail chosen from "Other options"; then only the request text, location and osm_id are sent. */
+async function fetchPlan(text, useMock, osmId = null) {
+  const extra = osmId === null ? formValues() : { osm_id: osmId };
   const response = useMock
     ? await fetch("/mock_plan.json", { cache: "no-store" })
     : await fetch("/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request: text, lat: DEFAULT_CENTER[0], lon: DEFAULT_CENTER[1], ...formValues() }),
+        body: JSON.stringify({ request: text, lat: DEFAULT_CENTER[0], lon: DEFAULT_CENTER[1], ...extra }),
       });
 
   let body = null;
@@ -431,8 +433,10 @@ async function onPlan(event) {
    ========================================================================== */
 
 let traceTimer = null;
+let currentPlan = null; // { request, mock } of the plan on screen, for "Other options"
 
 function renderPlan(plan, mock) {
+  currentPlan = { request: str(plan.request) || els.request.value.trim(), mock: !!mock };
   clearTimeout(traceTimer);
   fillForm(plan.constraints);
 
@@ -468,7 +472,8 @@ function setLoading(on, mock) {
     els.results.replaceChildren(
       el("div", { class: "loading" },
         el("span", { class: "spinner", "aria-hidden": "true" }),
-        el("span", {}, mock === "demo" ? "Loading recorded plan…"
+        el("span", {}, mock === "switch" ? "Switching to that trail…"
+                         : mock === "demo" ? "Loading recorded plan…"
                          : mock ? "Loading mock plan…" : "Planning… finding trails can take up to a minute.")),
     );
   }
@@ -617,18 +622,21 @@ function alternativesCard(plan) {
   if (alts && !alts.length) body = el("p", { class: "info-empty" }, "No other trails were close enough to suggest.");
   if (alts && alts.length) {
     const list = el("ul", { class: "alt-list" });
+    const mockPlan = !!(currentPlan && currentPlan.mock);
     for (const a of alts) {
       const score = toNum(a.score);
-      const btn = el("button", { type: "button", class: "alt", "aria-pressed": "false" },
-        el("span", { class: "alt-name" }, str(a.name) || "Unnamed trail"),
+      const osmId = Number(a.osm_id);
+      const name = str(a.name) || "Unnamed trail";
+      const usable = !mockPlan && Number.isInteger(osmId) && osmId > 0;
+      const btn = el("button", {
+          type: "button", class: "alt", disabled: !usable,
+          title: usable ? `Plan ${name} instead` : "Switching trails needs live or recorded data, not mock data",
+        },
+        el("span", { class: "alt-name" }, name),
         el("span", { class: "alt-meta mono" },
           [kmMi(a.distance_km), Number.isFinite(score) ? `score ${score.toFixed(2)}` : null].filter(Boolean).join(" · ")),
-        el("span", { class: "alt-selected" }, "✓ Selected"));
-      btn.addEventListener("click", () => {
-        const wasOn = btn.getAttribute("aria-pressed") === "true";
-        for (const b of list.querySelectorAll(".alt")) b.setAttribute("aria-pressed", "false");
-        btn.setAttribute("aria-pressed", String(!wasOn));
-      });
+        el("span", { class: "alt-go" }, "Switch →"));
+      if (usable) btn.addEventListener("click", () => switchTrail(osmId));
       list.append(el("li", {}, btn));
     }
     body = list;
@@ -1028,9 +1036,29 @@ function hikeUnload() {
   els.hikeBar.hidden = true;
 }
 
+function showEmptyHikeBar() {
+  els.hikeBar.hidden = false;
+  els.hikeProgressFill.style.width = "0%";
+  els.hikeProgress.setAttribute("aria-valuenow", "0");
+  els.simClock.textContent = "--:--";
+  els.simKm.textContent = "—";
+  els.simSunset.textContent = "—";
+  els.simSunsetBox.classList.remove("readout--warn", "readout--bad");
+  els.simSpeed.textContent = "—";
+  els.simPlay.textContent = "▶ Simulate hike";
+  for (const b of [els.simPlay, els.simReset, els.simSlow]) b.disabled = true;
+  els.hikeNote.textContent = "No route to simulate for this plan.";
+  els.hikeNote.hidden = false;
+}
+
 function hikeLoad(plan, coords) {
   hikeUnload();
-  if (!coords || !map) return;
+  if (!coords || !map) {
+    showEmptyHikeBar(); // e.g. outside coverage: no stale distance, Simulate disabled
+    return;
+  }
+  els.simPlay.disabled = false;
+  els.simReset.disabled = false;
   hike.plan = plan;
   hike.coords = coords;
   hike.cumKm = cumulativeKm(coords);
@@ -1318,6 +1346,29 @@ function initHike() {
   els.simPlay.addEventListener("click", () => (hike.state === "running" ? hikePause() : hikeStart()));
   els.simReset.addEventListener("click", hikeReset);
   els.simSlow.addEventListener("click", hikeSlowDown);
+}
+
+/* ==========================================================================
+   Other options: re-plan with a chosen trail
+   ========================================================================== */
+
+async function switchTrail(osmId) {
+  if (!currentPlan || currentPlan.mock) return;
+  const seq = ++requestSeq;
+  setLoading(true, "switch");
+  selectTab($("#tab-plan"));
+  try {
+    const plan = await fetchPlan(currentPlan.request, false, osmId);
+    if (seq !== requestSeq) return;
+    renderPlan(plan, false); // redraws the route, every card, narration and the audio prefetch
+    els.results.scrollIntoView({ block: "start" });
+  } catch (err) {
+    if (seq !== requestSeq) return;
+    const offline = err instanceof TypeError && /fetch/i.test(err.message);
+    showError(offline ? "Could not reach the server. Is it running?" : err.message);
+  } finally {
+    if (seq === requestSeq) setLoading(false);
+  }
 }
 
 /* ==========================================================================
