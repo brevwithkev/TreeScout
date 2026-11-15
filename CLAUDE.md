@@ -13,7 +13,9 @@ TreeScout is a hiking route planner: a FastAPI backend (Python 3.11+) plus a sta
 - `POST /plan` must never read `mock_plan.json` or emit mock values; only `GET /mock_plan.json` serves it. A failed data source is `{"available": false, "source": ..., "error": ...}`, never a mock fallback.
 - Current endpoints:
   - `GET /health` returns `{"ok": true}`
-  - `POST /plan` takes `{request: string, lat: number, lon: number, radius_km?: number (default 15)}` and returns an object shaped like `mock_plan.json`. It returns 404 when no trails are found and 502 when the upstream trail data fails; the error message is in `detail`.
+  - `GET /mock_plan.json` serves the contract example (frontend "Use mock data" only).
+  - `POST /plan` takes `{request, lat?, lon?, radius_km? (15), distance_km?, date? (YYYY-MM-DD), start? (HH:MM), prefs?}`; the optional form fields override the text. It runs `backend/agents.make_plan` (Gemini planner + checker, rule-based fallback) and always returns 200 in the `mock_plan.json` shape. Failures are per section (`available: false`); no trails or outside southeast Michigan gives `trail: null` (outside) or an unavailable trail plus a `warnings` entry. Target under ~20 s.
+  - Tests: `python -m unittest backend.tools.test_trails` (offline), `python tests/test_tools.py` (live tools), and `tests/plan_test.py` (live, forbidden mock strings; needs a running server, `TREESCOUT_URL` to override `localhost:8000`).
   - `POST /tts` will be the only path to ElevenLabs. It does not exist in `backend/main.py` yet.
 - `trail.coords` are `[lat, lon]` pairs, which is the order Leaflet expects. `narration[].coord_index` indexes into `trail.coords`.
 

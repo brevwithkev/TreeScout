@@ -8,9 +8,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from fastapi import HTTPException
-
-from backend.main import PlanRequest, plan
+from backend.main import ROOT, PlanRequest, plan
 from backend.tools import trails
 
 
@@ -57,26 +55,49 @@ class TrailTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs["timeout"], trails.TIMEOUT_SECONDS)
 
     @patch.object(trails, "urlopen")
-    def test_upstream_failure_becomes_502_and_is_not_cached(self, fetch):
+    def test_upstream_failure_raises_and_is_not_cached(self, fetch):
         fetch.side_effect = HTTPError(trails.OVERPASS_URL, 429, "Rate limited", {}, None)
-        with self.assertRaises(HTTPException) as caught:
-            plan(PlanRequest(request="A hike", lat=42, lon=-83))
-        self.assertEqual(caught.exception.status_code, 502)
-        self.assertIn("429", caught.exception.detail)
+        with self.assertRaises(trails.OverpassError) as caught:
+            trails.get_trails(42, -83, 15)
+        self.assertIn("429", str(caught.exception))
         self.assertFalse(trails._cache)
 
-    @patch("backend.main.get_trails")
-    def test_plan_contract_and_default_radius(self, discover):
-        discover.return_value = [{"name": "Real trail", "osm_id": 1, "distance_km": 2,
-                                  "coords": [[42, -83], [42.02, -83]]}]
-        result = plan(PlanRequest(request="A hike", lat=42, lon=-83))
-        discover.assert_called_once_with(42, -83, 15)
-        from backend.main import ROOT
+    def test_plan_builds_contract_from_tools_without_mock_values(self):
+        """POST /plan, offline: fake tools, no Gemini key -> rule-based planner."""
+        coords = [[42.0, -83.0], [42.01, -83.0], [42.0, -83.0]]
+        fakes = {
+            "_safe_trails": lambda lat, lon, r: {"source": "OSM", "items": [
+                {"name": "Real trail", "osm_id": 11, "distance_km": 2.2, "coords": coords},
+                {"name": "Other trail", "osm_id": 12, "distance_km": 5.0, "coords": coords[:2]}],
+                "checked_at": "2026-11-14T00:00:00Z"},
+            "get_weather": lambda lat, lon, d: {"source": "NWS", "summary": "Sunny, 50F", "precip_chance": 10,
+                                                "temperature_f": 50, "checked_at": "x"},
+            "get_climate": lambda lat, lon, d: {"available": False, "source": "NASA POWER", "error": "boom",
+                                                "checked_at": "x"},
+            "get_hazards": lambda lat, lon, r: {"source": "NASA EONET", "items": [], "radius_km": r, "checked_at": "t"},
+            "get_space_weather": lambda: {"source": "NASA DONKI", "kp_max": None, "storms": 0,
+                                          "aurora_chance": "low", "window": "w", "checked_at": "t"},
+            "get_elevation_gain": lambda c: {"source": "Open-Meteo", "elevation_gain_m": 12, "checked_at": "t"},
+        }
+        patches = [patch(f"backend.agents.{name}", fake) for name, fake in fakes.items()]
+        patches.append(patch.dict("os.environ", {"GEMINI_API_KEY": ""}))
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+        result = plan(PlanRequest(request="2 km walk near Ypsilanti tomorrow", lat=42, lon=-83))
         expected = json.loads((ROOT / "mock_plan.json").read_text(encoding="utf-8"))
-        self.assertEqual(result.keys(), expected.keys())
+        self.assertEqual(list(result), list(expected))
         self.assertEqual(result["trail"].keys(), expected["trail"].keys())
-        self.assertEqual(result["request"], "A hike")
         self.assertEqual(result["trail"]["name"], "Real trail")
+        self.assertEqual(result["trail"]["elevation_gain_m"], 12)
+        self.assertEqual(result["constraints"]["parsed_by"], "rules")
+        self.assertEqual(result["climate"], {"available": False, "source": "NASA POWER", "error": "boom"})
+        self.assertEqual([a["name"] for a in result["alternatives"]], ["Other trail"])
+        self.assertTrue(result["checker"]["approved"])
+        text = json.dumps(result)
+        for mock_value in ("Example Loop", "Acorn Nature Trail", "River Bend Path", "Found 14 named trails"):
+            self.assertNotIn(mock_value, text)
 
 
 if __name__ == "__main__":

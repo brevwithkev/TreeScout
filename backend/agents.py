@@ -10,7 +10,7 @@ Flow for every POST /plan:
      tool; the LLM only chooses and explains. mock_plan.json is never read here.
 """
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import date as Date, datetime, timedelta
 from threading import Lock
 from time import perf_counter
@@ -48,7 +48,10 @@ COVERAGE = {"lat": (41.70, 43.40), "lon": (-84.70, -82.40)}  # southeast Michiga
 LLM_TIMEOUT_MS = 15_000  # the SDK also sends this as the server-side deadline
 PLANNER_MAX_TURNS = 6
 PLANNER_BUDGET_S = 14     # after this the rule-based planner finishes the job
-CHECKER_SKIP_AFTER_S = 17  # skip the LLM checker (Python checks still run) to stay near 20 s
+CHECKER_SKIP_AFTER_S = 15  # skip the LLM checker (Python checks still run) to stay near 20 s
+CHECKER_TIMEOUT_MS = 10_000  # the Gemini API rejects deadlines under 10 s
+REVISE_WITH_LLM_BEFORE_S = 12  # later than this, checker feedback is handled by the rule-based reviser
+PREFETCH_WAIT_S = 3  # prefetched non-trail results the planner sees; slower ones are left to the planner
 
 PLACES = {  # town -> (lat, lon); the rule-based area parser
     "ypsilanti": (42.2411, -83.6130), "ann arbor": (42.2808, -83.7430), "dexter": (42.3384, -83.8886),
@@ -288,7 +291,7 @@ class LLMUnavailable(Exception):
     pass
 
 
-def _gemini():
+def _gemini(timeout_ms=LLM_TIMEOUT_MS):
     key, model = os.environ.get("GEMINI_API_KEY", "").strip(), os.environ.get("GEMINI_MODEL", "").strip()
     if not key or not model:
         raise LLMUnavailable("GEMINI_API_KEY or GEMINI_MODEL is not set")
@@ -297,7 +300,7 @@ def _gemini():
         from google.genai import types
     except ImportError as exc:
         raise LLMUnavailable(f"google-genai is not installed: {exc}") from exc
-    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=LLM_TIMEOUT_MS)), model, types
+    return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=timeout_ms)), model, types
 
 
 def _thinking(types, model):
@@ -401,7 +404,7 @@ class Planner:
 
 
 def llm_check(ctx, summary):
-    client, model, types = _gemini()
+    client, model, types = _gemini(CHECKER_TIMEOUT_MS)
     schema = {"type": "object", "properties": {"approved": {"type": "boolean"},
                                                "problems": {"type": "array", "items": {"type": "string"}}},
               "required": ["approved", "problems"]}
@@ -701,11 +704,24 @@ def _prefetch_context(ctx, area, constraints, space):
             out["compute_timing_for_top"] = ctx.timing(top, top.get("elevation_gain_m"), constraints["date"],
                                                        constraints["start"]).result()
         here = (round(area[0], 4), round(area[1], 4))
-        out["get_weather"] = ctx.tools.submit("get_weather", get_weather, *here, constraints["date"]).result()
-        out["get_climate"] = ctx.tools.submit("get_climate", get_climate, *here, constraints["date"]).result()
-        hazards = ctx.tools.submit("get_hazards", get_hazards, *here, HAZARD_RADIUS_KM).result()
-        out["get_hazards"] = hazards if _failed(hazards) else {**hazards, "items": hazards["items"][:5]}
-    out["get_space_weather"] = space.result()
+        futures = {
+            "get_weather": ctx.tools.submit("get_weather", get_weather, *here, constraints["date"]),
+            "get_climate": ctx.tools.submit("get_climate", get_climate, *here, constraints["date"]),
+            "get_hazards": ctx.tools.submit("get_hazards", get_hazards, *here, HAZARD_RADIUS_KM),
+        }
+    else:
+        futures = {}
+    futures["get_space_weather"] = space
+    deadline = perf_counter() + PREFETCH_WAIT_S
+    for name, future in futures.items():  # never hold the planner for a slow source
+        try:
+            result = future.result(timeout=max(0.0, deadline - perf_counter()))
+        except FuturesTimeout:
+            out[name] = "pending: still loading; call the tool if you need it"
+            continue
+        if name == "get_hazards" and not _failed(result):
+            result = {**result, "items": result["items"][:5]}
+        out[name] = result
     return out
 
 
@@ -777,7 +793,8 @@ def _approval_line(plan):
     bits = []
     if not _failed(t):
         bits.append(f"{t['start']} start is before the {t['latest_safe_start']} latest safe start")
-    bits.append(f"no NASA EONET events within {HAZARD_NEAR_KM} km")
+    bits.append("NASA EONET hazards unavailable" if _failed(plan["hazards"])
+                else f"no NASA EONET events within {HAZARD_NEAR_KM} km")
     if not _failed(w):
         bits.append(f"{w['precip_chance']}% chance of precipitation")
     return "; ".join(bits)
@@ -785,7 +802,10 @@ def _approval_line(plan):
 
 def _revise(ctx, planner, problems, plan, ranked, rejected, constraints):
     """Ask the LLM planner for a different trail or start time; fall back to rules. Returns (answer, constraints)."""
-    if planner is not None:
+    if planner is not None and ctx.elapsed() >= REVISE_WITH_LLM_BEFORE_S:
+        ctx.trace.add("planner", "fallback", "Skipped Gemini revision to stay within the time budget; "
+                                             "used the rule-based reviser")
+    elif planner is not None:
         try:
             answer = planner.run(
                 "The safety checker rejected your plan:\n- " + "\n- ".join(problems) +
