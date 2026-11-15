@@ -7,9 +7,10 @@ Type or say a request like *"Easy 3 mile walk near Ypsilanti tomorrow morning."*
 > Supported by the Michigan Space Grant Consortium, NASA grant 80NSSC20M0124.
 > NASA does not endorse this project.
 
-## Screenshots
+## Screenshots + Demo
 
 _Screenshots coming soon (`docs/screenshots/`): plan view, hazards tab, satellite layer, hike simulation with the TURN BACK warning._
+https://www.youtube.com/watch?v=K59TAZQJb1s
 
 ## How to run
 
