@@ -445,11 +445,12 @@ function renderPlan(plan, mock) {
   drawTrail(coords, trailName);
   hikeLoad(plan, coords); // resets any running simulation and pre-fetches narration audio
 
-  const hazards = renderHazards(plan, coords ? coords[0] : DEFAULT_CENTER);
+  const hazards = renderHazards(plan, coords ? coords[0] : DEFAULT_CENTER); // {eonet, serious}
   renderSources(plan);
   renderModeBadges(plan, mock);
 
   fill(els.results,
+    hazardsSummary(hazards), // short alert banner first: NWS alert Moderate or worse, or EONET events nearby
     warningsBanner(plan.warnings),
     trailCard(plan, coords),
     timingCard(plan),
@@ -458,7 +459,6 @@ function renderPlan(plan, mock) {
     spaceWeatherCard(plan),
     alternativesCard(plan),
     reportsCard(plan),
-    hazardsSummary(hazards),
     traceCard(plan),
   );
 }
@@ -487,7 +487,7 @@ function showError(message) {
 }
 
 function renderModeBadges(plan, mock) {
-  const partial = ["trail", "timing", "weather", "climate", "space_weather", "checker"]
+  const partial = ["trail", "timing", "weather", "climate", "space_weather", "checker", "alerts", "hike_window", "seasonal"]
     .some((k) => isObj(plan[k]) && plan[k].available === false);
   const recordedAt = str(plan.demo_recorded_at);
   const recordedLocal = recordedAt && fmtLocal(recordedAt);
@@ -576,13 +576,31 @@ function timingCard(plan) {
 function weatherCard(plan) {
   const w = section(plan, "weather");
   const pct = w ? toNum(w.precip_chance) : NaN;
-  const body = w && kv([
+  const daily = w ? kv([
     ["Forecast", str(w.summary)],
     ["Precipitation chance", Number.isFinite(pct) ? `${Math.round(pct)}%` : null],
-  ]);
+  ]) : unavailable("Daily forecast unavailable");
   const day = isObj(plan.constraints) ? fmtDay(plan.constraints.date) : null;
   const date = (w && fmtLocal(w.checked_at)) || (day && `forecast for ${day}`);
-  return card("Weather", { body, source: (w && str(w.source)) || "NWS", date });
+  return card("Weather", { body: el("div", {}, hikeWindowBlock(plan), daily), source: (w && str(w.source)) || "NWS", date });
+}
+
+/** "During your hike: 20% rain, 38-44F, wind 10 mph" from plan.hike_window (NWS hourly). */
+function hikeWindowBlock(plan) {
+  const hw = phaseH(plan, "hike_window");
+  if (hw.state === "missing") {
+    return el("p", { class: "hike-window" }, "During your hike: ", el("span", { class: "state state--info" }, NOT_CHECKED));
+  }
+  if (hw.state === "unavailable") {
+    return el("p", { class: "hike-window unavailable" }, el("span", { "aria-hidden": "true" }, "⊘ "),
+      `During your hike: hourly forecast unavailable${hw.error ? ` (${hw.error})` : ""}`);
+  }
+  const v = hw.value;
+  const conditions = Array.isArray(v.conditions) ? v.conditions.map(str).filter(Boolean) : [];
+  return el("div", { class: "hike-window" },
+    el("p", { class: "hike-window-summary" }, str(v.summary) || "During your hike: —"),
+    conditions.length && el("p", { class: "hazard-meta" }, conditions.join(" · ")),
+    el("p", { class: "source-line" }, `Source: ${hw.source || "NWS hourly"}`, str(v.window) ? ` · ${str(v.window)}` : null));
 }
 
 function climateCard(plan) {
@@ -660,11 +678,20 @@ function reportsCard(plan) {
   });
 }
 
+/** Short Plan-tab banner when an NWS alert is Moderate or worse, or NASA EONET events are nearby. */
 function hazardsSummary(hazards) {
-  if (!hazards || !hazards.length) return null;
-  return el("button", { type: "button", class: "banner banner--warn banner-btn", on: { click: () => selectTab($("#tab-hazards")) } },
-    el("span", { class: "banner-icon", "aria-hidden": "true" }, "▲"),
-    el("span", {}, `${hazards.length} NASA EONET ${hazards.length === 1 ? "event" : "events"} nearby. Open the Hazards tab.`));
+  const serious = (hazards && hazards.serious) || [];
+  const eonet = (hazards && hazards.eonet) || [];
+  if (!serious.length && !eonet.length) return null;
+  const bad = serious.some((a) => a.severity === "Severe" || a.severity === "Extreme");
+  const parts = serious.slice(0, 2).map((a) => `${str(a.event) || "Weather alert"} (${a.severity})`);
+  if (serious.length > 2) parts.push(`${serious.length - 2} more NWS ${serious.length - 2 === 1 ? "alert" : "alerts"}`);
+  if (eonet.length) parts.push(`${eonet.length} NASA EONET ${eonet.length === 1 ? "event" : "events"} nearby`);
+  return el("button", { type: "button", class: `banner ${bad ? "banner--bad" : "banner--warn"} banner-btn`,
+                        on: { click: () => selectTab($("#tab-hazards")) } },
+    el("span", { class: "banner-icon", "aria-hidden": "true" }, bad ? "✕" : "▲"),
+    el("span", {}, el("strong", {}, bad ? "Severe alert: " : serious.length ? "Alert: " : "Hazards: "),
+      `${parts.join("; ")}. Open the Hazards tab.`));
 }
 
 /* ---------- "How I planned this": agent trace replay ---------- */
@@ -740,17 +767,112 @@ function hazardIcon(type) {
   return HAZARD_ICONS[key] || HAZARD_ICONS[key + "s"] || "⚠️";
 }
 
-/** Normalizes plan.hazards; returns the drawn hazard list (or null when unavailable). */
+// Phase H sections. Recordings made before them don't have the keys: "Not checked in this recording".
+const NOT_CHECKED = "Not checked in this recording";
+const SEVERITY = { // icon (from .state--*) + word, never color alone
+  Extreme: { cls: "bad", word: "Extreme" }, Severe: { cls: "bad", word: "Severe" },
+  Moderate: { cls: "warn", word: "Moderate" }, Minor: { cls: "info", word: "Minor" },
+  Unknown: { cls: "info", word: "Unknown severity" },
+};
+const MODERATE_OR_WORSE = ["Moderate", "Severe", "Extreme"];
+const CONDITION_ICONS = { "low light": "🌇", "freezing temperatures": "🧊" };
+
+/** {state: "missing" | "unavailable" | "ok", value, items, source, error} for alerts, hike_window, seasonal, conditions. */
+function phaseH(plan, key) {
+  if (!isObj(plan) || plan[key] === null || plan[key] === undefined) return { state: "missing" };
+  const v = plan[key];
+  if (Array.isArray(v)) return { state: "ok", value: v, items: v.filter(isObj) };
+  if (!isObj(v)) return { state: "missing" };
+  if (v.available === false) return { state: "unavailable", source: str(v.source), error: str(v.error) };
+  return { state: "ok", value: v, items: Array.isArray(v.items) ? v.items.filter(isObj) : [], source: str(v.source) };
+}
+
+function hazardGroup(title, icon, body, source) {
+  return el("section", { class: "hazard-group", "aria-label": title },
+    el("h3", { class: "hazard-group-title" }, el("span", { "aria-hidden": "true" }, icon), " ", title),
+    body,
+    source && el("p", { class: "source-line" }, source));
+}
+
+/** Body for a group whose section is missing or unavailable; null when it is ok. */
+function groupProblem(s, label) {
+  if (s.state === "missing") return el("p", { class: "state state--info" }, NOT_CHECKED);
+  if (s.state === "unavailable") return unavailable(`${label} unavailable${s.error ? `: ${s.error}` : ""}`);
+  return null;
+}
+
+function staticHazard(icon, title, tag, meta, link) {
+  return el("li", { class: "hazard hazard--static" },
+    el("span", { class: "hazard-icon", "aria-hidden": "true" }, icon),
+    el("span", { class: "hazard-text" },
+      el("span", { class: "hazard-title" }, el("strong", {}, title), " ", tag),
+      meta.filter(Boolean).map((m) => el("span", { class: "hazard-meta" }, m)),
+      link && el("a", { class: "hazard-link", href: link.href, target: "_blank", rel: "noopener" }, link.text)));
+}
+
+function sourceChecked(s, fallback) {
+  const at = s.state === "ok" && isObj(s.value) ? fmtLocal(s.value.checked_at) : null;
+  return `Source: ${s.source || fallback}${at ? ` · checked ${at}` : ""}`;
+}
+
+/** Hazards tab: NASA EONET events (with map markers), NWS alerts, Seasonal, Trail conditions.
+    Returns {eonet, serious} for the Plan-tab banner (serious = NWS alerts Moderate or worse). */
 function renderHazards(plan, origin) {
   if (hazardLayer) hazardLayer.clearLayers();
+  const eonet = renderEonet(plan, origin);
+  const alerts = phaseH(plan, "alerts"), seasonal = phaseH(plan, "seasonal"), conditions = phaseH(plan, "conditions");
+
+  const alertItems = alerts.items || [];
+  const alertList = () => el("ul", { class: "hazard-list" }, alertItems.map((a) => {
+    const sev = SEVERITY[a.severity] || SEVERITY.Unknown;
+    const when = [fmtLocal(a.onset) && `from ${fmtLocal(a.onset)}`, fmtLocal(a.ends) && `until ${fmtLocal(a.ends)}`]
+      .filter(Boolean).join(" ");
+    return staticHazard("⚠️", str(a.event) || "Weather alert", el("span", { class: `state state--${sev.cls} sev` }, sev.word),
+      [str(a.headline), when], str(a.link) && { href: str(a.link), text: "NWS alert details" });
+  }));
+  const alertsGroup = hazardGroup("NWS alerts", "📢",
+    groupProblem(alerts, "NWS alerts")
+      || (alertItems.length ? alertList() : el("p", { class: "state state--ok" }, "No active NWS alerts for this point")),
+    alerts.state === "ok" && sourceChecked(alerts, "NWS"));
+
+  const seasonalItems = seasonal.items || [];
+  const seasonalList = () => el("ul", { class: "hazard-list" }, seasonalItems.map((i) =>
+    staticHazard(/deer|hunt/i.test(i.title || "") ? "🦌" : "📅", str(i.title) || "Seasonal hazard",
+      el("span", { class: "state state--warn sev" }, "Seasonal"),
+      [str(i.advice), str(i.source) && `Source: ${str(i.source)}`],
+      str(i.link) && { href: str(i.link), text: "More information" })));
+  const seasonalGroup = hazardGroup("Seasonal", "📅",
+    groupProblem(seasonal, "Seasonal hazards")
+      || (seasonalItems.length ? seasonalList() : el("p", { class: "state state--ok" }, "Nothing in season for this date and place")),
+    seasonal.state === "ok" && `Source: ${seasonal.source || "TreeScout seasonal calendar"}`);
+
+  const conditionItems = conditions.items || [];
+  const conditionList = () => el("ul", { class: "hazard-list" }, conditionItems.map((c) =>
+    staticHazard(CONDITION_ICONS[String(c.title || "").toLowerCase()] || "🥾", str(c.title) || "Condition",
+      el("span", { class: "state state--warn sev" }, "Condition"),
+      [str(c.advice), str(c.source) && `Source: ${str(c.source)}`])));
+  const timed = !!section(plan, "timing"); // conditions are derived from the timing; none without a planned hike
+  const conditionsGroup = hazardGroup("Trail conditions", "🥾",
+    groupProblem(conditions, "Trail conditions")
+      || (conditionItems.length ? conditionList()
+        : timed ? el("p", { class: "state state--ok" }, "No low light or freezing temperatures expected")
+        : el("p", { class: "state state--info" }, "Not checked: no hike timing for this plan")),
+    conditions.state === "ok" && timed && "Source: derived from the hike timing and the NWS hourly forecast");
+
+  const count = (eonet.items ? eonet.items.length : 0) + alertItems.length + seasonalItems.length + conditionItems.length;
+  els.hazardCount.textContent = count ? String(count) : "";
+  els.hazardCount.title = count ? `${count} hazard ${count === 1 ? "item" : "items"}` : "";
+  els.hazardsBody.replaceChildren(eonet.group, alertsGroup, seasonalGroup, conditionsGroup);
+  return { eonet: eonet.items || [], serious: alertItems.filter((a) => MODERATE_OR_WORSE.includes(a.severity)) };
+}
+
+/** NASA EONET group + map markers; items is null when EONET is unavailable. */
+function renderEonet(plan, origin) {
   const checked = fmtLocal(plan.hazards_checked_at);
   const sourceDate = `Source: NASA EONET${checked ? ` · checked ${checked}` : ""}`;
+  const group = (body) => hazardGroup("NASA EONET events", "🛰️", body, sourceDate);
 
-  if (!Array.isArray(plan.hazards)) {
-    els.hazardCount.textContent = "";
-    els.hazardsBody.replaceChildren(unavailable("NASA EONET hazards unavailable"), el("p", { class: "source-line" }, sourceDate));
-    return null;
-  }
+  if (!Array.isArray(plan.hazards)) return { items: null, group: group(unavailable("NASA EONET hazards unavailable")) };
 
   const hazards = plan.hazards.filter(isObj).map((h) => {
     const at = toLatLon(h.lat, h.lon) || (Array.isArray(h.coords) ? toLatLon(h.coords[0], h.coords[1]) : null);
@@ -766,13 +888,8 @@ function renderHazards(plan, origin) {
     };
   });
 
-  els.hazardCount.textContent = hazards.length ? `(${hazards.length})` : "";
-
   if (!hazards.length) {
-    els.hazardsBody.replaceChildren(
-      el("p", { class: "state state--ok" },
-        `No active NASA EONET events within 100 km (checked ${checked || "at an unknown time"})`));
-    return hazards;
+    return { items: hazards, group: group(el("p", { class: "state state--ok" }, "No active NASA EONET events within 100 km")) };
   }
 
   const list = el("ul", { class: "hazard-list" });
@@ -785,12 +902,13 @@ function renderHazards(plan, origin) {
     const meta = [capitalize(h.type), h.date, h.dist || (h.at ? null : "location unknown")].filter(Boolean).join(" · ");
     const item = el("button", { type: "button", class: "hazard", disabled: !marker },
       el("span", { class: "hazard-icon", "aria-hidden": "true" }, h.icon),
-      el("span", { class: "hazard-text" }, el("strong", {}, h.title), el("span", { class: "hazard-meta" }, meta)));
+      el("span", { class: "hazard-text" },
+        el("span", { class: "hazard-title" }, el("strong", {}, h.title), " ", el("span", { class: "state state--warn sev" }, "Event")),
+        el("span", { class: "hazard-meta" }, meta)));
     if (marker) item.addEventListener("click", () => { map.setView(h.at, Math.max(map.getZoom(), 8)); marker.openPopup(); });
     list.append(el("li", {}, item));
   }
-  els.hazardsBody.replaceChildren(list, el("p", { class: "source-line" }, sourceDate));
-  return hazards;
+  return { items: hazards, group: group(list) };
 }
 
 function hazardPopup(h) {
@@ -808,11 +926,18 @@ function hazardPopup(h) {
    ========================================================================== */
 
 function renderSources(plan) {
+  // ok: true | false | "missing" (a recording made before that source existed)
   const row = (what, source, ok, date) => el("tr", {},
     el("th", { scope: "row" }, what),
     el("td", {}, source),
-    el("td", {}, el("span", { class: `state state--${ok ? "ok" : "bad"}` }, ok ? "Available" : "Unavailable")),
+    el("td", {}, ok === "missing" ? el("span", { class: "state state--info" }, "Not checked")
+      : el("span", { class: `state state--${ok ? "ok" : "bad"}` }, ok ? "Available" : "Unavailable")),
     el("td", { class: "mono" }, date || "—"));
+  const hRow = (what, key, fallback) => {
+    const h = phaseH(plan, key);
+    const date = h.state === "ok" && isObj(h.value) ? fmtLocal(h.value.checked_at) : null;
+    return row(what, h.source || fallback, h.state === "missing" ? "missing" : h.state === "ok", date);
+  };
 
   const s = (k) => section(plan, k);
   const day = isObj(plan.constraints) ? fmtDay(plan.constraints.date) : null;
@@ -823,6 +948,9 @@ function renderSources(plan) {
     row("Climate", (s("climate") && str(s("climate").source)) || "NASA POWER", !!s("climate"), s("climate") && str(s("climate").years)),
     row("Space weather", (s("space_weather") && str(s("space_weather").source)) || "NASA DONKI", !!s("space_weather"), s("space_weather") && fmtLocal(s("space_weather").checked_at)),
     row("Hazards", "NASA EONET", Array.isArray(plan.hazards), fmtLocal(plan.hazards_checked_at)),
+    hRow("Weather alerts", "alerts", "NWS"),
+    hRow("Hike-window forecast", "hike_window", "NWS hourly"),
+    hRow("Seasonal hazards", "seasonal", "TreeScout seasonal calendar"),
     row("Satellite map", "NASA GIBS · MODIS Terra", true, gibsDay()),
   ];
   els.sourcesBody.replaceChildren(
