@@ -41,7 +41,7 @@ class TrailTests(unittest.TestCase):
         result[0]["name"] = "Changed"
         self.assertEqual(trails.get_trails(42, -83, 15)[0]["name"], "Named path")
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.kwargs["timeout"], 15)
+        self.assertEqual(fetch.call_args.kwargs["timeout"], 30)
 
     @patch.object(trails, "urlopen")
     def test_upstream_failure_becomes_502_and_is_not_cached(self, fetch):
@@ -59,7 +59,7 @@ class TrailTests(unittest.TestCase):
         result = plan(PlanRequest(request="A hike", lat=42, lon=-83))
         discover.assert_called_once_with(42, -83, 15)
         from backend.main import ROOT
-        expected = json.loads((ROOT / "mock_plan.json").read_text())
+        expected = json.loads((ROOT / "mock_plan.json").read_text(encoding="utf-8"))
         self.assertEqual(result.keys(), expected.keys())
         self.assertEqual(result["trail"].keys(), expected["trail"].keys())
         self.assertEqual(result["request"], "A hike")

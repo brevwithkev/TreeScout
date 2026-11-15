@@ -5,6 +5,7 @@ import json
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,9 @@ from backend.tools.trails import OverpassError, get_trails
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
+
+DEFAULT_LAT = 42.2411
+DEFAULT_LON = -83.6130
 
 app = FastAPI(title="TreeScout")
 
@@ -21,10 +25,15 @@ def health() -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.get("/mock_plan.json")
+def mock_plan() -> FileResponse:
+    return FileResponse(ROOT / "mock_plan.json", media_type="application/json")
+
+
 class PlanRequest(BaseModel):
     request: str = Field(min_length=1)
-    lat: float = Field(gt=-90, lt=90, allow_inf_nan=False)
-    lon: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    lat: float = Field(default=DEFAULT_LAT, gt=-90, lt=90, allow_inf_nan=False)
+    lon: float = Field(default=DEFAULT_LON, ge=-180, le=180, allow_inf_nan=False)
     radius_km: float = Field(default=15, gt=0, allow_inf_nan=False)
 
 
