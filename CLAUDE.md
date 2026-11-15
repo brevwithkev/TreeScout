@@ -4,7 +4,8 @@ TreeScout is a hiking route planner: a FastAPI backend (Python 3.11+) plus a sta
 
 ## Ownership
 - The user owns `frontend/` and, by agreement with the teammate (Kenneth) on 2026-11-14, the **Phase 2 backend**: `backend/main.py` (`/plan`), `backend/agents.py`, `backend/tools/*` and their tests.
-- **Never create or edit `backend/narration.py` or `backend/voice.py`.** Kenneth owns those (with Codex). If they need a change, describe it so the user can pass it on.
+- `backend/narration.py` (narration, late check, ElevenLabs TTS) was created at the user's request on 2026-11-14 from a prototype; edit it only when the user asks.
+- **Never create or edit `backend/voice.py`.** Kenneth owns it (with Codex). If it needs a change, describe it so the user can pass it on.
 - Each task says which area it covers ("In frontend/ only", "In backend/ only"); stay inside it.
 
 ## API contract
@@ -16,7 +17,9 @@ TreeScout is a hiking route planner: a FastAPI backend (Python 3.11+) plus a sta
   - `GET /mock_plan.json` serves the contract example (frontend "Use mock data" only).
   - `POST /plan` takes `{request, lat?, lon?, radius_km? (15), distance_km?, date? (YYYY-MM-DD), start? (HH:MM), prefs?}`; the optional form fields override the text. It runs `backend/agents.make_plan` (Gemini planner + checker, rule-based fallback) and always returns 200 in the `mock_plan.json` shape. Failures are per section (`available: false`); no trails or outside southeast Michigan gives `trail: null` (outside) or an unavailable trail plus a `warnings` entry. Target under ~20 s.
   - Tests: `python -m unittest backend.tools.test_trails` (offline), `python tests/test_tools.py` (live tools), and `tests/plan_test.py` (live, forbidden mock strings; needs a running server, `TREESCOUT_URL` to override `localhost:8000`).
-  - `POST /tts` will be the only path to ElevenLabs. It does not exist in `backend/main.py` yet.
+  - `POST /tts` takes `{text}` (1-1000 chars) and returns `audio/mpeg`; it is the only path to ElevenLabs (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`, default `eleven_flash_v2_5`). Audio is cached in `cache/tts/`. 502 with `detail` if the key is missing or ElevenLabs fails.
+  - `POST /narrate/late` takes `{plan, current_km, elapsed_min}` and returns `{"late": false}` or `{"late": true, "text": ...}`.
+  - `/plan` fills `narration` via `generate_narration`: items `{coord_index, km, kind, text}` sorted by `coord_index` (kind: trailhead, km, halfway, hazard, finish).
 - `trail.coords` are `[lat, lon]` pairs, which is the order Leaflet expects. `narration[].coord_index` indexes into `trail.coords`.
 
 ## Frontend stack

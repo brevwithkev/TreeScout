@@ -20,6 +20,7 @@ import logging
 import os
 import re
 
+from backend.narration import generate_narration
 from backend.tools.climate import get_climate
 from backend.tools.common import now_iso, unavailable
 from backend.tools.elevation import get_elevation_gain
@@ -957,7 +958,7 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         trail = {"available": False, "source": trail.get("source"), "error": trail.get("error")}
     logger.info("Plan done in %.1f s: trail=%s parsed_by=%s approved=%s", ctx.elapsed(),
                 (trail or {}).get("name"), parsed_by, checker.get("approved"))
-    return {
+    result = {
         "request": ctx.text,
         "constraints": {**{k: constraints.get(k) for k in ("distance_km", "date", "start", "prefs")},
                         "parsed_by": parsed_by},
@@ -977,3 +978,5 @@ def _response(ctx, constraints, parsed_by, trail, alternatives, explanation, tim
         "warnings": warnings,
         "flood_or_burn_layer": None,
     }
+    result["narration"] = generate_narration(result)
+    return result
