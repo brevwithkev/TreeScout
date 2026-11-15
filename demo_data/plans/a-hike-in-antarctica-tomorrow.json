@@ -1,0 +1,70 @@
+{
+ "request": "A hike in Antarctica tomorrow",
+ "constraints": {
+  "distance_km": 8.0,
+  "date": "2026-11-15",
+  "start": "10:00",
+  "prefs": [],
+  "parsed_by": "rules"
+ },
+ "trail": null,
+ "alternatives": [],
+ "explanation": "Outside our coverage area (southeast Michigan).",
+ "timing": {
+  "available": false,
+  "source": "TreeScout timing",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "weather": {
+  "available": false,
+  "source": "NWS",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "climate": {
+  "available": false,
+  "source": "NASA POWER",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "space_weather": {
+  "source": "NASA DONKI",
+  "kp_max": null,
+  "aurora_chance": "low",
+  "checked_at": "2026-11-15T04:57:00Z"
+ },
+ "hazards": {
+  "available": false,
+  "source": "NASA EONET",
+  "error": "Outside our coverage area (southeast Michigan)"
+ },
+ "hazards_checked_at": null,
+ "reports": [],
+ "agent_trace": [
+  {
+   "agent": "planner",
+   "step": "tool",
+   "tool": "get_space_weather",
+   "summary": "NASA DONKI: 0 geomagnetic storms 2026-11-12 to 2026-11-16; aurora chance low",
+   "ms": 405
+  },
+  {
+   "agent": "planner",
+   "step": "fallback",
+   "summary": "LLM unavailable, used rule-based planner"
+  },
+  {
+   "agent": "planner",
+   "step": "reject",
+   "summary": "Antarctica is outside our coverage area (southeast Michigan)"
+  }
+ ],
+ "checker": {
+  "approved": false,
+  "rounds": 0
+ },
+ "narration": [],
+ "warnings": [
+  "Outside our coverage area (southeast Michigan)"
+ ],
+ "flood_or_burn_layer": null,
+ "demo_recorded_at": "2026-11-15T04:57:05Z"
+}
